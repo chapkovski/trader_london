@@ -3,8 +3,8 @@ from typing import List
 from uuid import UUID, uuid4
 
 
-class Trader(BaseModel):
-    id: UUID = uuid4()
+class TraderModel(BaseModel):
+    id: UUID = uuid4
     cash: float
     stocks: int
     blocked_cash: float = 0  # Amount of cash blocked for pending bid orders
@@ -12,11 +12,16 @@ class Trader(BaseModel):
 
 
 class Order(BaseModel):
-    trader: Trader
+    trader: TraderModel
     order_type: str  # "bid" or "ask"
     quantity: int
     price: float
     active: bool = True  # Marker for active orders
+
+
+class OrderBookModel(BaseModel):
+    active_book: List[Order] = []
+    full_order_history: List[Order] = []
 
 
 class Transaction(BaseModel):
@@ -28,7 +33,7 @@ class Transaction(BaseModel):
 
 class TradingSessionModel(BaseModel):
     id: UUID = uuid4()
-    active_traders: List[Trader] = []
+    active_traders: List[TraderModel] = []
     active_book: List[Order] = []
     full_order_history: List[Order] = []
     transaction_history: List[Transaction] = []
