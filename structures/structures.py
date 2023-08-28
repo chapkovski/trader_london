@@ -32,7 +32,7 @@ class OrderStatus(str, Enum):
 
 
 class Order(BaseModel):
-    id: UUID = uuid4()  # Unique ID for each order
+    id: UUID   # Unique ID for each order
     session_id: UUID  # ID of the trading session this order belongs to
     trader: TraderModel
     order_type: str  # "bid" or "ask"
@@ -41,11 +41,12 @@ class Order(BaseModel):
     order_status: OrderStatus = OrderStatus.ACTIVE  # New field for order status
     created_at: datetime
 
-
-class OrderBookModel(BaseModel):
-    active_book: List[Order] = []
-    full_order_history: List[Order] = []
-
+class NewOrderRequest(BaseModel):
+    trader_id: UUID
+    session_id: UUID
+    order_type: str  # "bid" or "ask"
+    quantity: int
+    price: float
 
 class Transaction(BaseModel):
     buyer_order: Order
@@ -55,6 +56,11 @@ class Transaction(BaseModel):
     created_at: datetime
 
 
+class OrderBookModel(BaseModel):
+    active_book: List[Order] = []
+
+
+
 class TradingSessionModel(BaseModel):
     id: UUID = uuid4
     active_traders: List[TraderModel] = []
@@ -62,6 +68,11 @@ class TradingSessionModel(BaseModel):
     full_order_history: List[Order] = []
     transaction_history: List[Transaction] = []
     created_at: datetime
+
+
+
+
+
 
 
 class Error(BaseModel):
