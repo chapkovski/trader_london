@@ -101,3 +101,9 @@ async def test_workflow():
         response = await ac.get(f"/trader/{trader_id_2}/transactions/")
         assert response.status_code == 200
         logging.info(f'Transactions response: {response.json()}')
+        # Fetch the transaction history for the session
+        response = await ac.get(f"/session/{session_id}/transaction_history/")
+        assert response.status_code == 200
+        transaction_history = response.json()
+        logging.info(f'SESSION Transaction history response: {transaction_history}')
+        logging.info(len(transaction_history))
