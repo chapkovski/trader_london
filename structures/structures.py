@@ -2,6 +2,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 from uuid import UUID, uuid4
 from datetime import datetime
+from enum import Enum
 
 
 class CreatingTraderModel(BaseModel):
@@ -24,12 +25,20 @@ class TraderModel(BaseModel):
     session_id: Optional[UUID] = None  # Session ID if the trader joins a session
 
 
+class OrderStatus(str, Enum):
+    ACTIVE = "active"
+    FULFILLED = "fulfilled"
+    CANCELLED = "cancelled"
+
+
 class Order(BaseModel):
+    id: UUID = uuid4()  # Unique ID for each order
+    session_id: UUID  # ID of the trading session this order belongs to
     trader: TraderModel
     order_type: str  # "bid" or "ask"
     quantity: int
     price: float
-    active: bool = True  # Marker for active orders
+    order_status: OrderStatus = OrderStatus.ACTIVE  # New field for order status
     created_at: datetime
 
 
