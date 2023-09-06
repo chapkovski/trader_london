@@ -22,7 +22,7 @@ class TraderModel(BaseModel):
     blocked_cash: float = 0  # Amount of cash blocked for pending bid orders
     blocked_stocks: int = 0  # Number of stocks blocked for pending ask orders
     joined_at: Optional[datetime] = None
-    session_id: Optional[UUID] = None  # Session ID if the trader joins a session
+    session_id: Optional[UUID] = None  # Session ID if the traders joins a session
 
 
 class OrderStatus(str, Enum):

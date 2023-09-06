@@ -24,7 +24,7 @@ async def test_workflow():
         session_id = session_data.get("session_id")
         assert session_id is not None
 
-        # Step 2: Create a new trader 1 and 2
+        # Step 2: Create a new traders 1 and 2
         trader_response_1 = await ac.post("/create_trader/", json={"cash": 1000.0, "stocks": 100})
         assert trader_response_1.status_code == 200
         trader_data_1 = trader_response_1.json()
@@ -92,12 +92,12 @@ async def test_workflow():
         logging.info(f'Active book response: {response.json()}')
 
         # Step 5: Get the transaction history for the session
-        # Get all transactions for the trader 1
+        # Get all transactions for the traders 1
         response = await ac.get(f"/trader/{trader_id_1}/transactions/")
         assert response.status_code == 200
         logging.info(f'Transactions response: {response.json()}')
 
-        # Get all transactions for the trader 2
+        # Get all transactions for the traders 2
         response = await ac.get(f"/trader/{trader_id_2}/transactions/")
         assert response.status_code == 200
         logging.info(f'Transactions response: {response.json()}')
