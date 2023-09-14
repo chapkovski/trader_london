@@ -6,3 +6,4 @@ websockets
 argparse
 pika
 aio-pika
+termcolor
