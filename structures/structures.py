@@ -23,12 +23,14 @@ import uuid
 from datetime import datetime
 
 class OrderModel(BaseModel):
+    # id: uuid.UUID
     id: uuid.UUID
     amount: float
     price: float
     status: OrderStatus
     order_type: OrderType  # ask or bid
     timestamp: datetime
-    session_id: uuid.UUID
+    # session_id: uuid.UUID
+    session_id: str # FOR TESTING. REMOVE LATER
     trader_id: uuid.UUID
 
