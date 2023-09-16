@@ -6,6 +6,13 @@ class OrderStatus(Enum):
     FULFILLED = 'fulfilled'
     CANCELLED = 'cancelled'
 
+
+class ActionType(Enum):
+    POST_NEW_ORDER = 'add_order'
+    CANCEL_ORDER = 'cancel_order'
+    UPDATE_BOOK_STATUS = 'update_book_status'
+    REGISTER = 'register_me'
+
 class OrderType(Enum):
     ASK = 'ask'
     BID = 'bid'
