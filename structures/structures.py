@@ -1,10 +1,8 @@
 from enum import Enum
 from pydantic import BaseModel
+
+from datetime import datetime
 import uuid
-class OrderStatus(Enum):
-    ACTIVE = 'active'
-    FULFILLED = 'fulfilled'
-    CANCELLED = 'cancelled'
 
 
 class ActionType(Enum):
@@ -17,10 +15,13 @@ class OrderType(Enum):
     ASK = 'ask'
     BID = 'bid'
 
+class OrderStatus(Enum):
+    BUFFERED = 'buffered'
+    ACTIVE = 'active'
+    FULFILLED = 'fulfilled'
+    CANCELLED = 'cancelled'
 
-from pydantic import BaseModel
-import uuid
-from datetime import datetime
+
 
 class OrderModel(BaseModel):
     # id: uuid.UUID
@@ -34,3 +35,9 @@ class OrderModel(BaseModel):
     session_id: str # FOR TESTING. REMOVE LATER
     trader_id: uuid.UUID
 
+class TransactionModel(BaseModel):
+    id: uuid.UUID
+    bid_order_id: uuid.UUID
+    ask_order_id: uuid.UUID
+    timestamp: datetime
+    price: float
