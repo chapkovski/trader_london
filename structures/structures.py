@@ -5,17 +5,17 @@ from datetime import datetime
 import uuid
 
 
-class ActionType(Enum):
+class ActionType(str,Enum):
     POST_NEW_ORDER = 'add_order'
     CANCEL_ORDER = 'cancel_order'
     UPDATE_BOOK_STATUS = 'update_book_status'
     REGISTER = 'register_me'
 
-class OrderType(Enum):
+class OrderType(str,Enum):
     ASK = 'ask'
     BID = 'bid'
 
-class OrderStatus(Enum):
+class OrderStatus(str,Enum):
     BUFFERED = 'buffered'
     ACTIVE = 'active'
     FULFILLED = 'fulfilled'

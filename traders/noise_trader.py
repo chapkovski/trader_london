@@ -105,8 +105,11 @@ message_stack = {"a 2d array of shape (settings['stack_max_size'],len(cols_messa
 # these are the entries
 cols_features_state = {'they will vary: they are intermediate inputs not used by the interface'}
 
-features_state = {"a 1d array of shape (len(cols_features_state),) and type floats"}
+# features_state = {"a 1d array of shape (len(cols_features_state),) and type floats"}
+n_features = 22  # This should be set to the actual number of features
+n_alphas = 3  # This should be set to the actual number of alphas
 
+features_state = np.zeros(n_alphas * n_features)
 # signals state
 
 # these are the entries
@@ -127,8 +130,8 @@ noise_state = {'inv': None, 'outstanding_orders': {'bid': {},
 # outstanding_orders = {'bid':{2003:4,2002:1}, 'ask': {2011:1,2016:2,2018:1}}
 # new orders are in the same format as outstanding_orders
 # queue: prices as key inside the key there is a size and an id
-bid_queue_dict = {bid_p[i]: [[bid_s[i]], [-1]] for i in range(len(bid_p))}
-ask_queue_dict = {ask_p[i]: [[ask_s[i]], [-1]] for i in range(len(ask_p))}
+# bid_queue_dict = {bid_p[i]: [[bid_s[i]], [-1]] for i in range(len(bid_p))}
+# ask_queue_dict = {ask_p[i]: [[ask_s[i]], [-1]] for i in range(len(ask_p))}
 # example of bid_queue_dict format: i use -1 for noise and some integer for other traders
 bid_queue_dict = {2003: [[4, 2], [-1, 2]], 2002: [[5], [-1]]}
 
@@ -274,10 +277,16 @@ def get_features_stack_update(features_stack, book, message, book_of, settings):
     return features_stack
 
 
-def get_features_update(features_state, book_stack, message_stack, settings, cols_ft: None):
+def get_features_update(features_state, book_stack, message_stack, settings, cols_ft=None):
+    features_state = list(features_state)
     alphas = settings['alphas_ewma']
     n_alphas = len(alphas)
+    n_features = 22  # This should be set to the actual number of features
+    n_alphas = 3  # This should be set to the actual number of alphas
+
+    features_state = np.zeros(n_alphas * n_features)
     levels_n = settings['levels_n']
+    ind_bid_price1 = settings['ind_bid_price'][0]
     ind_bid_price1 = settings['ind_bid_price'][0]
     ind_ask_price1 = settings['ind_ask_price'][0]
 
@@ -300,7 +309,7 @@ def get_features_update(features_state, book_stack, message_stack, settings, col
     # features_new = np.r_[book_of,book_of_abs,dmid ,dmid_abs,signed_trd,trd ]
 
     features_new = np.r_[of, dmid, of_abs, dmid_abs]
-
+    cols_features = None
     if cols_features is None:
         cols_of = ['of_' + str(level) for level in range(1, 1 + levels_n)]
         cols_dmid = ['dmid']
@@ -324,8 +333,13 @@ def get_features_update(features_state, book_stack, message_stack, settings, col
 
     for i in range(n_alphas):
         alpha = alphas[i]
+
         ewma_block_i = features_state[(i * n_features):((i + 1) * n_features)]
+        ewma_block_i = np.array(ewma_block_i)
+        features_new = np.array(features_new)
+
         ewma_block_i = alpha * ewma_block_i + (1 - alpha) * features_new
+
         features_state[(i * n_features):((i + 1) * n_features)] = ewma_block_i
 
     # update features names with ewma
@@ -338,6 +352,12 @@ def ewma_update(ewma_val, x, alpha):
     for alpha in alphas:
         ewma_val = alpha * ewma_val + (1 - alpha) * x
     return ewma_val
+
+
+def get_model_prediction(features, model, settings):
+    """Its just a placeholder. SHould be replaced by the actual model prediction"""
+
+    return np.random.uniform(0, 1)
 
 
 def get_signal_update(features_state, models, settings):
@@ -368,8 +388,11 @@ def get_signal_informed(signal_state, settings_informed):
 
 
 def get_signal_noise(signal_state, settings_noise):
-    # could be placed in get_signal_update
-    # use seed if need replicability
+    """It seems that this one is used to randomly generate events (posts: bids/asks and cancels).
+    It returns a list of parameters that are used to generate the events.
+    I personally would prefer for readability to have a function that returns a dict of parameters.
+    It's unclear for me why we need signal_state here.
+    """
 
     pr_order = settings_noise['pr_order']
     pr_bid = settings_noise['pr_bid']
@@ -395,14 +418,6 @@ def get_signal_noise(signal_state, settings_noise):
     return signal
 
 
-# the next will do something and return an order
-# order = {'bid_price': 1d_array,
-#          'ask_price': 1d_array,
-#          'bid_size': 1d_array,
-#          'ask_size': 1d_array}
-# if len(1d_array)=0, no order for that field. If orders at different levels, then lenght>1.
-
-
 def get_market_maker_order(book, message, signal_market_maker, market_maker_state,
                            settings_market_maker, settings):
     # do someting and get order in the following format
@@ -422,14 +437,17 @@ def get_informed_order(book, message, signal_informed, informed_state,
 
 
 def get_noise_rule(book, signal_noise, noise_state, settings_noise, settings):
-    # price_name     = ['ask_price','bid_price']
-    # size_name      = ['ask_size','bid_size']
-    price_name = ['ask', 'bid']
+    """
+       book - book state,
+       signal_noise - an array of parameters that are used to generate the events.
+       noise state - a dict with a key outstanding_orders that contains a list of outstanding orders for this specific trader
+       settings_noise - a dict with parameters for noise trader
+       settings - a dict with general parameters
 
-    pr_order = settings_noise['pr_order']
-    pr_bid = settings_noise['pr_bid']
-    pr_passive = settings_noise['pr_passive']
-    n_levels = settings_noise['levels_n']
+       If book is provided, and signal noise and trader's current state (in noise_state), then
+       it returns a list of orders to be placed (or cancelled if the quantity is negative).
+       """
+    price_name = ['ask', 'bid']
 
     max_size_level = settings_noise['max_size_level']
 
@@ -454,6 +472,7 @@ def get_noise_rule(book, signal_noise, noise_state, settings_noise, settings):
         ind_size = [ind_ask_size, ind_bid_size]
 
         event_bid_int = int(event_bid)
+
         if event_passive:
 
             # find the sizes and prices on the book
@@ -464,19 +483,14 @@ def get_noise_rule(book, signal_noise, noise_state, settings_noise, settings):
 
             if price >= 0:
                 size = 1
-                # old format
-                # order  =  {price_name[event_bid_int] : [price],
-                #            size_name[event_bid_int]  : [size]}
                 order[price_name[event_bid_int]].update({price: [size]})
 
         else:
             price = book[ind_price[event_bid_int][0]] + (
                     2 * event_bid_int - 1)  # price improve: if spread is small, then it aggresses
             size = 1
-            # order  =  {price_name[event_bid_int] : [price],
-            #            size_name[event_bid_int]  : [size]}
             order[price_name[event_bid_int]].update({price: [size]})
-
+        price2cancel = None
         if event_cancel:  # there is also a cancel event, irrespective of the above
             # if there are outstanding orders, it cancels one at random
             outstanding_orders = noise_state['outstanding_orders']
@@ -495,23 +509,24 @@ def get_noise_rule(book, signal_noise, noise_state, settings_noise, settings):
                     ind_key = int(np.floor(cancel_depth * L))
                     outstanding_prices = list(outstanding_asks.keys())
                     price2cancel = outstanding_prices[ind_key]
+            if price2cancel is not None:
 
-            size2cancel = -1  # negative means cancellation
-            event_bid_cancel_int = int(event_bid_cancel)
+                size2cancel = -1  # negative means cancellation
+                event_bid_cancel_int = int(event_bid_cancel)
 
-            if price2cancel not in order[price_name[event_bid_cancel_int]]:
-                order[price_name[event_bid_cancel_int]].update({price2cancel: [size2cancel]})
-            else:  # amend the existing order
-                size_order_final = order[price_name[event_bid_cancel_int]][price2cancel][0] + size2cancel
-                if size_order_final != 0:
-                    order[price_name[event_bid_cancel_int]][price2cancel][0] = size_order_final
-                else:
-                    order[price_name[event_bid_cancel_int]].pop(price2cancel)  # delete, no order
+                if price2cancel not in order[price_name[event_bid_cancel_int]]:
+                    order[price_name[event_bid_cancel_int]].update({price2cancel: [size2cancel]})
+                else:  # amend the existing order
+                    size_order_final = order[price_name[event_bid_cancel_int]][price2cancel][0] + size2cancel
+                    if size_order_final != 0:
+                        order[price_name[event_bid_cancel_int]][price2cancel][0] = size_order_final
+                    else:
+                        order[price_name[event_bid_cancel_int]].pop(price2cancel)  # delete, no order
 
     return order
 
 
-def get_noise_order(book, message, signal_noise, noise_state,
+def get_noise_order(book, signal_noise, noise_state,
                     settings_noise, settings):
     order = get_noise_rule(book, signal_noise, noise_state, settings_noise, settings)
 
@@ -582,7 +597,7 @@ def get_noise_rule_1(book, noise_state, settings_noise, settings):
                          size_name[event_bid_int]: [size]}
         else:
             price = book[ind_price[event_bid_int][0]] + (
-                        2 * event_bid_int - 1)  # price improve: if spread is small, then it aggresses
+                    2 * event_bid_int - 1)  # price improve: if spread is small, then it aggresses
             size = 1
             order = {price_name[event_bid_int]: [price],
                      size_name[event_bid_int]: [size]}
@@ -723,10 +738,9 @@ while cond:
         signals_state = get_signal_update(features_state, models, settings)
 
     # call each subscribed trader`
-    # NBNBNBNBN TODO TODO
-    # only noise trader  - that's THE MOST IMPORTANT AND THE ONLY PART WE ARE INTERETED IND HERE
+
     signal_noise = get_signal_noise(signals_state, settings_noise)
-    order_noise = get_noise_order(book, message, signal_noise, noise_state,
+    order_noise = get_noise_order(book, signal_noise, noise_state,
                                   settings_noise, settings)
 
     # put together all the orders: only one as we only have one trader
@@ -741,12 +755,3 @@ while cond:
     # 3. the state of all the traders, including the outstanding orders
     iter_num += 1
     cond = iter_num < max_iter
-
-
-
-
-
-
-
-
-
