@@ -9,6 +9,8 @@ Created on Wed Aug  2 10:14:44 2023
 import numpy as np
 import numba
 import datetime
+from traderabbit.custom_logger import setup_custom_logger
+logger = setup_custom_logger(__name__)
 
 # I list quantities that will be needed in the experiments
 # what is inside the place holder functions will be defined on a case by case basis
@@ -44,7 +46,7 @@ settings_noise = {'pr_order': .8,  # probability of a noise trader order arrival
                   'pr_bid': .5,  # equal prob of bid or ask order }
                   'pr_cancel': .2,  # probability of an order cancellation
                   'levels_n': settings['levels_n'],  # it could be different
-                  'max_size_level': 5  # the largest size in a level, after that will post on the next
+                  'max_size_level': 3  # the largest size in a level, after that will post on the next
                   }
 
 # this might be extended, but for definiteness assume two predicitons models only
@@ -537,8 +539,9 @@ def get_noise_order(book, signal_noise, noise_state,
 
 
 # finds the first price at which there is a size less than max_size_level, else gives -1
-@numba.jit('float64(float64[:],float64[:], float64)', nopython=True)
+# @numba.jit('float64(float64[:],float64[:], float64)', nopython=True)
 def get_noise_condition_price(prices, sizes, max_size_level):
+
     n = len(sizes)
     cond = True
     i = int(0)
