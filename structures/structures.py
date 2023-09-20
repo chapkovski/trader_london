@@ -1,8 +1,21 @@
-from enum import Enum
+from enum import Enum, IntEnum, StrEnum
 from pydantic import BaseModel
 
 from datetime import datetime
 import uuid
+
+
+class LobsterEventType(IntEnum):
+    """For the LOBSTER data, the event type is an integer. This class maps the integer to a string.
+    See the documentation at: https://lobsterdata.com/info/DataStructure.php
+    """
+    NEW_LIMIT_ORDER = 1
+    CANCELLATION_PARTIAL = 2
+    CANCELLATION_TOTAL = 3
+    EXECUTION_VISIBLE = 4
+    EXECUTION_HIDDEN = 5
+    CROSS_TRADE = 6
+    TRADING_HALT = 7
 
 
 class ActionType(str, Enum):
