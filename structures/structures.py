@@ -25,9 +25,9 @@ class ActionType(str, Enum):
     REGISTER = 'register_me'
 
 
-class OrderType(str, Enum):
-    ASK = 'ask'  # sell
-    BID = 'bid'  # buy
+class OrderType(IntEnum):
+    ASK = -1  # sell
+    BID = 1  # buy
 
 
 class OrderStatus(str, Enum):
