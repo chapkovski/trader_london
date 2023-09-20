@@ -5,22 +5,30 @@ from datetime import datetime
 import uuid
 
 
-class ActionType(str,Enum):
+class ActionType(str, Enum):
     POST_NEW_ORDER = 'add_order'
     CANCEL_ORDER = 'cancel_order'
     UPDATE_BOOK_STATUS = 'update_book_status'
     REGISTER = 'register_me'
 
-class OrderType(str,Enum):
-    ASK = 'ask'
-    BID = 'bid'
 
-class OrderStatus(str,Enum):
+class OrderType(str, Enum):
+    ASK = 'ask'  # sell
+    BID = 'bid'  # buy
+
+
+class OrderStatus(str, Enum):
     BUFFERED = 'buffered'
     ACTIVE = 'active'
-    FULFILLED = 'fulfilled'
+    EXECUTED = 'executed'
     CANCELLED = 'cancelled'
 
+
+class TraderType(int, Enum):
+    NOISE = 0
+    MARKET_MAKER = 1
+    INFORMED = 2
+    HUMAN = 3
 
 
 class OrderModel(BaseModel):
@@ -32,8 +40,9 @@ class OrderModel(BaseModel):
     order_type: OrderType  # ask or bid
     timestamp: datetime
     # session_id: uuid.UUID
-    session_id: str # FOR TESTING. REMOVE LATER
+    session_id: str  # FOR TESTING. REMOVE LATER
     trader_id: uuid.UUID
+
 
 class TransactionModel(BaseModel):
     id: uuid.UUID
