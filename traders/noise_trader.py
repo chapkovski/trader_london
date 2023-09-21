@@ -539,7 +539,7 @@ def get_noise_order(book, signal_noise, noise_state,
 
 
 # finds the first price at which there is a size less than max_size_level, else gives -1
-# @numba.jit('float64(float64[:],float64[:], float64)', nopython=True)
+@numba.jit('float64(float64[:],float64[:], float64)', nopython=True)
 def get_noise_condition_price(prices, sizes, max_size_level):
 
     n = len(sizes)
@@ -547,7 +547,7 @@ def get_noise_condition_price(prices, sizes, max_size_level):
     i = int(0)
     price = -1.
     while cond:
-        cond = (sizes[i] >= max_size_level) and (i < n)
+        cond = (i < n) and (sizes[i] >= max_size_level)
         # print(sizes[i] >=max_size_level)
         i = i + 1
 
