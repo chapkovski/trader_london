@@ -10,6 +10,7 @@ import numpy as np
 import numba
 import datetime
 from traderabbit.custom_logger import setup_custom_logger
+
 logger = setup_custom_logger(__name__)
 
 # I list quantities that will be needed in the experiments
@@ -454,7 +455,7 @@ def get_noise_rule(book, signal_noise, noise_state, settings_noise, settings):
     max_size_level = settings_noise['max_size_level']
 
     event_order = signal_noise[0]
-    event_passive = signal_noise[1]
+    event_passive =  signal_noise[1]
     event_bid = signal_noise[2]
     event_cancel = signal_noise[3]
     event_bid_cancel = signal_noise[4]
@@ -479,6 +480,7 @@ def get_noise_rule(book, signal_noise, noise_state, settings_noise, settings):
 
             # find the sizes and prices on the book
             book_size = book[ind_size[event_bid_int]]
+
             book_price = book[ind_price[event_bid_int]]
 
             price = get_noise_condition_price(book_price, book_size, max_size_level)
@@ -539,73 +541,18 @@ def get_noise_order(book, signal_noise, noise_state,
 
 
 # finds the first price at which there is a size less than max_size_level, else gives -1
-@numba.jit('float64(float64[:],float64[:], float64)', nopython=True)
+# @numba.jit('float64(float64[:],float64[:], float64)', nopython=True)
+
 def get_noise_condition_price(prices, sizes, max_size_level):
 
-    n = len(sizes)
-    cond = True
-    i = int(0)
-    price = -1.
-    while cond:
-        cond = (i < n) and (sizes[i] >= max_size_level)
-        # print(sizes[i] >=max_size_level)
-        i = i + 1
+    # Zip the prices and sizes, then find the first pair where size is either zero or less than max_size_level
+    for p, s in zip(prices, sizes):
+        if s < max_size_level:
+            return p  # return the price of the first such pair
 
-    if i <= n:
-        i = i - 1
-        price = prices[i]
-
-    return price
+    return -1  # if no such pair exists, return -1
 
 
-def get_noise_rule_1(book, noise_state, settings_noise, settings):
-    price_name = ['ask_price', 'bid_price']
-    size_name = ['ask_size', 'bid_size']
-
-    pr_order = settings_noise['pr_order']
-    pr_bid = settings_noise['pr_bid']
-    pr_passive = settings_noise['pr_passive']
-    n_levels = settings['levels_n']
-
-    max_size_level = settings_noise['max_size_level']
-    state_noise = noise_state['state_noise']
-
-    event_order = pr_order >= state_noise[0]
-    order = {}
-
-    if event_order:
-
-        ind_bid_price = settings['ind_bid_price']
-        ind_bid_size = settings['ind_bid_size']
-        ind_ask_price = settings['ind_ask_price']
-        ind_ask_size = settings['ind_ask_size']
-
-        ind_price = [ind_ask_price, ind_bid_price]
-        ind_size = [ind_ask_size, ind_bid_size]
-
-        event_passive = pr_passive >= state_noise[1]
-        event_bid = pr_bid >= state_noise[2]
-        event_bid_int = int(event_bid)
-        if event_passive:
-
-            # find the sizes and prices on the book
-            book_size = book[ind_size[event_bid_int]]
-            book_price = book[ind_price[event_bid_int]]
-
-            price = get_noise_condition_price(book_price, book_size, max_size_level)
-
-            if price >= 0:
-                size = 1
-                order = {price_name[event_bid_int]: [price],
-                         size_name[event_bid_int]: [size]}
-        else:
-            price = book[ind_price[event_bid_int][0]] + (
-                    2 * event_bid_int - 1)  # price improve: if spread is small, then it aggresses
-            size = 1
-            order = {price_name[event_bid_int]: [price],
-                     size_name[event_bid_int]: [size]}
-
-    return order
 
 
 # execution code
@@ -672,12 +619,11 @@ def get_insert_sell(ask_prices, ask_sizes,
 
 prices = np.array([10, 4, 6, 2, 3, 5, 6, 7, 1, 3]) + 0.
 sizes = np.array([10, 4, 6, 2, 3, 5, 6, 7, 1, 3]) + 0.
-max_size_level = 3
+max_size_level = 5
 
 
 # some test for me, ignore
-# get_noise_condition_price(prices,sizes,  max_size_level)
-# %timeit get_noise_condition_price(prices,sizes,  max_size_level)
+
 
 
 def get_book_message_init(best_bid, size, settings):
