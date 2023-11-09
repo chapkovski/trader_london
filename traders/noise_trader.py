@@ -477,12 +477,9 @@ def get_noise_rule(book, signal_noise, noise_state, settings_noise, settings):
         event_bid_int = int(event_bid)
 
         if event_passive:
-
             # find the sizes and prices on the book
             book_size = book[ind_size[event_bid_int]]
-
             book_price = book[ind_price[event_bid_int]]
-
             price = get_noise_condition_price(book_price, book_size, max_size_level)
 
             if price >= 0:
