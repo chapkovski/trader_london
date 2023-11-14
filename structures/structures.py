@@ -26,8 +26,8 @@ class ActionType(str, Enum):
 
 
 class OrderType(IntEnum):
-    ASK = -1  # sell
-    BID = 1  # buy
+    ASK = -1  #  the price a seller is willing to accept for a security
+    BID = 1  # the price a buyer is willing to pay for a security
 
 
 class OrderStatus(str, Enum):
