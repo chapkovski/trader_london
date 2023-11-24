@@ -10,6 +10,7 @@ import numpy as np
 import numba
 import datetime
 from traderabbit.custom_logger import setup_custom_logger
+import random
 
 logger = setup_custom_logger(__name__)
 
@@ -43,7 +44,7 @@ settings_market_maker = {'n_levels': 3,  # the number of levels at which to post
 settings_informed = {'inv': 100}
 
 settings_noise = {'pr_order': .8,  # probability of a noise trader order arrival
-                  'pr_passive': .8,  # probability of resting order
+                  'pr_passive': .7,  # probability of resting order
                   'pr_bid': .5,  # equal prob of bid or ask order }
                   'pr_cancel': .2,  # probability of an order cancellation
                   'levels_n': settings['levels_n'],  # it could be different
@@ -523,6 +524,87 @@ def get_noise_rule(book, signal_noise, noise_state, settings_noise, settings):
                         order[price_name[event_bid_cancel_int]][price2cancel][0] = size_order_final
                     else:
                         order[price_name[event_bid_cancel_int]].pop(price2cancel)  # delete, no order
+
+    return order
+
+
+def get_noise_rule_unif(book, signal_noise, noise_state, settings_noise, settings):
+    # price_name     = ['ask_price','bid_price']
+    # size_name      = ['ask_size','bid_size']
+    price_name = ['ask', 'bid']
+    price2cancel = None
+    pr_order = settings_noise['pr_order']
+    pr_bid = settings_noise['pr_bid']
+    pr_passive = settings_noise['pr_passive']
+    n_levels = settings_noise['levels_n']
+
+    max_size_level = settings_noise['max_size_level']
+
+    event_order = signal_noise[0]
+    event_passive = signal_noise[1]
+    event_bid = signal_noise[2]
+    event_cancel = signal_noise[3]
+    event_bid_cancel = signal_noise[4]
+
+    cancel_depth = signal_noise[6]
+
+    order = {'bid': {}, 'ask': {}}
+
+
+    if event_order:
+
+        ind_bid_price = settings['ind_bid_price']
+        ind_bid_size = settings['ind_bid_size']
+        ind_ask_price = settings['ind_ask_price']
+        ind_ask_size = settings['ind_ask_size']
+
+        ind_price = [ind_ask_price, ind_bid_price]
+        ind_size = [ind_ask_size, ind_bid_size]
+
+        n_levels = settings['levels_n']
+        mid = (book[ind_ask_price[0]] + book[ind_bid_price[0]]) / 2
+        edge = np.floor(np.random.rand(1) * n_levels) + 0.5*(1 + float(np.mod(mid,1)==0))
+
+        event_bid_int = int(event_bid)
+        if event_passive:
+                price = int(mid + [-2 * event_bid_int +1] * edge)
+                size = 1
+                order[price_name[event_bid_int]].update({price: [size]})
+        else:
+                price = int(mid + (2*event_bid_int -1) * np.mod(mid,1))
+                size = 2
+                order[price_name[event_bid_int]].update({price: [size]})
+
+        if event_cancel:  # there is also a cancel event, irrespective of the above
+            # if there are outstanding orders, it cancels one at random
+            outstanding_orders = noise_state['outstanding_orders']
+            if event_bid_cancel:
+                outstanding_bids = outstanding_orders['bid']
+                L = len(outstanding_bids)
+                if L > 0:  # this is almost always the case
+                    ind_key = int(np.floor(cancel_depth * L))
+                    outstanding_prices = list(outstanding_bids.keys())
+                    price2cancel = outstanding_prices[ind_key]
+
+            else:
+                outstanding_asks = outstanding_orders['ask']
+                L = len(outstanding_asks)
+                if L > 0:  # this is almost always the case
+                    ind_key = int(np.floor(cancel_depth * L))
+                    outstanding_prices = list(outstanding_asks.keys())
+                    price2cancel = outstanding_prices[ind_key]
+
+            size2cancel = -1  # negative means cancellation
+            event_bid_cancel_int = int(event_bid_cancel)
+
+            if price2cancel not in order[price_name[event_bid_cancel_int]]:
+                order[price_name[event_bid_cancel_int]].update({price2cancel: [size2cancel]})
+            else:  # amend the existing order
+                size_order_final = order[price_name[event_bid_cancel_int]][price2cancel][0] + size2cancel
+                if size_order_final != 0:
+                    order[price_name[event_bid_cancel_int]][price2cancel][0] = size_order_final
+                else:
+                    order[price_name[event_bid_cancel_int]].pop(price2cancel)  # delete, no order
 
     return order
 
