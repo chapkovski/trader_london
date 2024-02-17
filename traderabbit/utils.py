@@ -6,7 +6,7 @@ from enum import Enum
 from pprint import pprint
 from enum import IntEnum
 from uuid import UUID
-from structures.structures import OrderModel, OrderType, ActionType, LobsterEventType
+from config.structures import OrderModel, OrderType, ActionType, LobsterEventType
 from collections import defaultdict
 from typing import List, Dict
 import pandas as pd
@@ -42,10 +42,6 @@ class CustomEncoder(JSONEncoder):
         if isinstance(obj, dict_values):
             return list(obj)
         return JSONEncoder.default(self, obj)
-
-
-
-
 
 
 def ack_message(func):

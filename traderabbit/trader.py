@@ -2,17 +2,12 @@ import asyncio
 import aio_pika
 import json
 import uuid
-import random
-from structures.structures import OrderModel, OrderStatus, OrderType, ActionType, TraderType
-from datetime import datetime
+from config.structures import OrderType, ActionType, TraderType, params
 from traderabbit.utils import ack_message, convert_to_noise_state, convert_to_book_format, convert_to_trader_actions
 from traderabbit.custom_logger import setup_custom_logger
-from pprint import pprint
-from traders.noise_trader import get_noise_rule, get_signal_noise, settings_noise, settings, get_noise_rule_unif
-import numpy as np
+from traders.noise_trader import get_signal_noise, settings_noise, settings, get_noise_rule_unif
 
 logger = setup_custom_logger(__name__)
-
 
 class Trader:
     orders = []
@@ -22,12 +17,12 @@ class Trader:
     def __init__(self, trader_type: TraderType):
         self.trader_type = trader_type.value
         self.id = str(uuid.uuid4())
-        print(f"Trader created with UUID: {self.id}")
+        print(f"{trader_type} Trader created with UUID: {self.id}")
         self.connection = None
         self.channel = None
         self.trading_session_uuid = None
         self.trader_queue_name = f'trader_{self.id}'  # unique queue name based on Trader's UUID
-        print(f"Trader queue name: {self.trader_queue_name}")
+        logger.info(f"{trader_type} Trader created with UUID: {self.id}")
         self.queue_name = None
         self.broadcast_exchange_name = None
         self.trading_system_exchange = None
@@ -48,7 +43,8 @@ class Trader:
                 logger.info(f"Trader {self.id} connection closed")
 
         except Exception as e:
-            print(f"An error occurred during Trader cleanup: {e}")
+            pass
+            # print(f"An error occurred during Trader cleanup: {e}")
 
     async def connect_to_session(self, trading_session_uuid):
         self.trading_session_uuid = trading_session_uuid
@@ -148,7 +144,7 @@ class Trader:
 
     async def send_cancel_order_request(self, order_id: uuid.UUID):
         cancel_order_request = {
-            "action": ActionType.CANCEL_ORDER.value,  # Assuming you have an ActionType Enum
+            "action": ActionType.CANCEL_ORDER.value, 
             "trader_id": self.id,
             "order_id": order_id
         }
@@ -157,6 +153,15 @@ class Trader:
         # TODO: deal with response if needed (what if order is already cancelled? what is a part of transaction?
         #  what if order is not found? what if order is not yours?)
         logger.warning(f"Trader {self.id} sent cancel order request: {cancel_order_request}")
+
+
+    async def run(self):
+        raise NotImplementedError("Method only implmemented in subclasses. This is baseclass.")
+
+class NoiseTrader(Trader):
+
+    def __init__(self, trader_type: TraderType):
+        super().__init__(trader_type)
 
     async def find_and_cancel_order(self, price):
         """finds the order with the given price and cancels it"""
@@ -169,41 +174,78 @@ class Trader:
         logger.warning(f"Trader {self.id} tried to cancel order with price {price} but it was not found")
         logger.warning(f'Available prices are: {[order.get("price") for order in self.orders]}')
 
+    def generate_noise_orders(self):
+        """generates noise orders based on the current book state and noise state"""
+        book_format = convert_to_book_format(self.all_orders)
+        noise_state = convert_to_noise_state(self.orders)
+        signal_noise = get_signal_noise(signal_state=None, settings_noise=settings_noise)
+        noise_orders = get_noise_rule_unif(book_format, signal_noise, noise_state, settings_noise, settings)
+        return convert_to_trader_actions(noise_orders)
+
     async def run(self):
+        """simulation step for the noise trader"""
         try:
             while True:
-                orders_to_do = self.generate_noise_orders()
-                for order in orders_to_do:
-                    if order['action_type'] == ActionType.POST_NEW_ORDER.value:
-                        order_type_str = order['order_type']
-                        order_type_value = OrderType[order_type_str.upper()]
-                        await self.post_new_order(order['amount'], order['price'], order_type_value)
-                    elif order['action_type'] == ActionType.CANCEL_ORDER.value:
+                for order in self.generate_noise_orders():
+                    action_type = order['action_type']
+                    if action_type == ActionType.POST_NEW_ORDER.value:
+                        await self.post_new_order(order['amount'], order['price'], OrderType[order['order_type'].upper()])
+                    elif action_type == ActionType.CANCEL_ORDER.value:
                         await self.find_and_cancel_order(order['price'])
 
-                await asyncio.sleep(0.5)  # LEt's post them every second. TODO: REMOVE THIS
+                await asyncio.sleep(params.trader.post_every_x_second)  # Consider making this a variable or configuration if possible
         except Exception as e:
-            # Handle the exception here
             logger.error(f"Exception in trader run: {e}")
-            # Optionally re-raise the exception if you want it to be propagated
             raise
+        
 
-    def generate_noise_orders(self):
-        # Convert the active orders to the book format understood by get_noise_rule
+from queue import Queue
+import asyncio
 
-        book_format = convert_to_book_format(self.all_orders)
-        # logger.critical(f"Book format: {list(book_format)}")
-        #
-        # # Convert the trader's state to the noise_state format
-        noise_state = convert_to_noise_state(self.orders)  # Assuming you have this method
-        #
-        # # Get the noise signal
-        signal_noise = get_signal_noise(signal_state=None, settings_noise=settings_noise)
-        #
-        # # Generate noise orders
-        # noise_orders = get_noise_rule(book_format, signal_noise, noise_state, settings_noise, settings)
-        # noise_orders = get_noise_rule(book_format, signal_noise, noise_state, settings_noise, settings)
-        noise_orders = get_noise_rule_unif(book_format, signal_noise, noise_state, settings_noise, settings)
-        converted_noise_orders = convert_to_trader_actions(noise_orders)
+class HumanTrader(Trader):
+    def __init__(self, trader_type: TraderType, trader_id: str, loop=None):
+        super().__init__(trader_type)
+        self.id = trader_id  # Override the UUID with a provided trader ID
+        self.message_queue = asyncio.Queue()
+        self.loop = loop or asyncio.get_event_loop()
 
-        return converted_noise_orders
+    async def place_order(self, order_data: dict):
+        amount = order_data['amount']
+        price = order_data['price']
+        # Translate the order_type string to the correct OrderType enum
+        order_type_str = order_data['order_type'].upper()
+        print(f'amount: {amount}, price: {price}, order_type: {order_type_str}')
+        if order_type_str == 'BUY':
+            order_type = OrderType.BID  # Assuming 'BUY' corresponds to a bid
+        elif order_type_str == 'SELL':
+            order_type = OrderType.ASK  # Assuming 'SELL' corresponds to an ask
+        else:
+            raise ValueError(f"Unknown order type: {order_type_str}")
+        await self.post_new_order(amount, price, order_type)
+
+    async def cancel_order(self, order_id):
+        # Convert order_id to UUID if it's not already one
+        if not isinstance(order_id, uuid.UUID):
+            order_id = uuid.UUID(order_id)
+        await self.send_cancel_order_request(order_id)
+        logger.info(f"Cancel order request sent for order_id: {order_id}")
+
+    async def run(self):
+        logger.info(f"Running HumanTrader ID {self.id}...")
+
+        try:
+            while True:
+                if not self.message_queue.empty():
+                    message = await self.message_queue.get()
+                    action = message.get("action")
+                    if action == "cancel_order":
+                        # Call the method to handle cancel order request
+                        await self.cancel_order(message["order_id"])
+                    elif action == "add_order":
+                        # Handle add order request
+                        await self.place_order(message)
+                    self.message_queue.task_done()
+                
+                await asyncio.sleep(params.trader.post_every_x_second)
+        except Exception as e:
+            logger.error(f"Exception in HumanTrader run: {e}")

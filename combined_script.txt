@@ -1,0 +1,2573 @@
+
+
+import uuid
+import asyncio
+import random
+import time
+import json
+import pandas as pd
+from structs import TraderCreationData
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class HumanTrader:
+    websocket = None
+
+    def __init__(self, trader_data: TraderCreationData):
+        self.uuid = str(uuid.uuid4())
+        self.update_task = None
+        self.orders_df = pd.DataFrame(columns=['uuid', 'timestamp', 'type', 'price', 'quantity', 'status', 'owner'])
+        self.generate_initial_order_book()
+        self.transaction_history = self.generate_initial_history()
+
+        # Use parameters from TraderCreationData
+        self.shares = trader_data.initial_shares
+        self.cash = trader_data.initial_cash
+        self.max_short_shares = trader_data.max_short_shares
+        self.max_short_cash = trader_data.max_short_cash
+        self.trading_day_duration = trader_data.trading_day_duration
+        self.max_active_orders = trader_data.max_active_orders
+        self.noise_trader_update_freq = trader_data.noise_trader_update_freq
+
+    @property
+    def own_orders(self):
+        # Filter and return orders that belong to the human trader
+        return self.orders_df[self.orders_df['owner'] == 'human']
+
+    def calculate_spread(self):
+        # Use the aggregated order book for spread calculation
+        aggregated_order_book = self.order_book
+
+        # Ensure there are both bids and asks
+        if not aggregated_order_book['bids'] or not aggregated_order_book['asks']:
+            return None
+
+        highest_bid = max(aggregated_order_book['bids'], key=lambda x: x['x'])['x']
+        lowest_ask = min(aggregated_order_book['asks'], key=lambda x: x['x'])['x']
+
+        # Spread is the difference between the lowest ask and the highest bid
+        return lowest_ask - highest_bid
+
+    @property
+    def active_orders(self):
+        # Filter and return active orders
+        return self.orders_df[self.orders_df['status'] == 'active']
+
+    @property
+    def order_book(self):
+        # Filter for active bids and asks
+        active_bids = self.active_orders[(self.active_orders['type'] == 'bid')]
+        active_asks = self.active_orders[(self.active_orders['type'] == 'ask')]
+
+        # Initialize empty order book
+        order_book = {'bids': [], 'asks': []}
+
+        # Aggregate and format bids if there are any
+        if not active_bids.empty:
+            bids_grouped = active_bids.groupby('price').quantity.sum().reset_index().sort_values(by='price',
+                                                                                                 ascending=False)
+            order_book['bids'] = bids_grouped.rename(columns={'price': 'x', 'quantity': 'y'}).to_dict('records')
+
+        # Aggregate and format asks if there are any
+        if not active_asks.empty:
+            asks_grouped = active_asks.groupby('price').quantity.sum().reset_index().sort_values(by='price')
+            order_book['asks'] = asks_grouped.rename(columns={'price': 'x', 'quantity': 'y'}).to_dict('records')
+
+        return order_book
+
+    def generate_initial_order_book(self):
+        # Number of initial orders on each side
+        num_orders = 10
+
+        # Lists to hold bid and ask orders
+        bid_orders = []
+        ask_orders = []
+
+        # Generate initial bid orders
+        for _ in range(num_orders):
+            bid_orders.append({
+                'uuid': str(uuid.uuid4()),
+                'timestamp': time.time(),
+                'type': 'bid',
+                'price': random.randint(9500, 10000),
+                'quantity': 1,
+                'status': 'active',
+                'owner': 'system'  # or another appropriate identifier
+            })
+
+        # Generate initial ask orders
+        for _ in range(num_orders):
+            ask_orders.append({
+                'uuid': str(uuid.uuid4()),
+                'timestamp': time.time(),
+                'type': 'ask',
+                'price': random.randint(10000, 10500),
+                'quantity': 1,
+                'status': 'active',
+                'owner': 'system'
+            })
+
+        # Concatenate the new orders to the orders DataFrame
+        new_orders = pd.DataFrame(bid_orders + ask_orders)
+        self.orders_df = pd.concat([self.orders_df, new_orders], ignore_index=True)
+
+    def generate_initial_history(self, interval=10, num_entries=10):
+        # Get the current time
+        current_time = time.time()
+
+        # Generate history with prices at different timestamps
+        history = []
+        for i in range(num_entries):
+            price = random.randint(9500, 10500)
+            # Subtracting from the current time as we go back in the loop
+            timestamp = current_time - (num_entries - 1 - i) * interval
+            history.append({'price': price, 'timestamp': timestamp})
+
+        return history
+
+    # let's write a general method for sending updates to the client which will also automatically injects
+    # the order book and transaction history into the message and also current spread and inventory situation
+    # input: additional mesages that will be added to the dict
+    # output: response of await websocket.send_json
+    # the only required input field is type
+    async def send_message(self, type, **kwargs):
+        spread = self.calculate_spread()
+        inventory = self.calculate_inventory()
+
+        # Get the current price from the last transaction in the history
+        current_price = self.transaction_history[-1]['price'] if self.transaction_history else None
+
+        # Convert own_orders DataFrame to a list of dictionaries for JSON serialization
+        trader_orders = self.own_orders.to_dict('records')
+
+        return await self.websocket.send_json(
+            {
+                'type': type,
+                'order_book': self.order_book,
+                'history': self.transaction_history,
+                'spread': spread,
+                'inventory': inventory,
+                'current_price': current_price,
+                'trader_orders': trader_orders,
+                **kwargs
+            }
+        )
+
+    def calculate_inventory(self):
+        # Return the actual inventory
+        return {'shares': self.shares, 'cash': self.cash}
+
+    async def run(self):
+        n = self.noise_trader_update_freq
+        while True:
+            print('PERIODIC UPDATE')
+            self.generate_order()
+            self.execute_orders()
+            await self.send_message('update')
+            await asyncio.sleep(n)
+
+    def generate_order(self):
+        # Generate a new order
+        new_order_price = self.calculate_new_order_price()
+        order_type = random.choice(['bid', 'ask'])
+
+        new_order = {
+            'uuid': str(uuid.uuid4()),
+            'timestamp': time.time(),
+            'type': order_type,
+            'price': new_order_price,
+            'quantity': 1,
+            'status': 'active',
+            'owner': 'system'  # Or any appropriate identifier
+        }
+
+        new_order_df = pd.DataFrame([new_order])
+        self.orders_df = pd.concat([self.orders_df, new_order_df], ignore_index=True)
+
+    def execute_orders(self):
+        # Filter active bids and asks
+        active_bids = self.active_orders[self.active_orders['type'] == 'bid']
+        active_asks = self.active_orders[self.active_orders['type'] == 'ask']
+
+        # Sort bids and asks by price and timestamp
+        active_bids = active_bids.sort_values(by=['price', 'timestamp'], ascending=[False, True])
+        active_asks = active_asks.sort_values(by=['price', 'timestamp'], ascending=[True, True])
+
+        # Execute orders
+        while not active_bids.empty and not active_asks.empty and active_bids.iloc[0]['price'] >= active_asks.iloc[0][
+            'price']:
+            # Determine the price of the earliest order
+            executed_price = active_bids.iloc[0]['price'] if active_bids.iloc[0]['timestamp'] < active_asks.iloc[0][
+                'timestamp'] else active_asks.iloc[0]['price']
+            self.transaction_history.append({'price': executed_price, 'timestamp': time.time()})
+
+            # Update the quantities and status in the DataFrame
+            bid_index = active_bids.index[0]
+            ask_index = active_asks.index[0]
+
+            # Check if the human trader's bid or ask order is executed
+            if bid_index in self.own_orders.index:
+                self.shares += self.orders_df.at[bid_index, 'quantity']
+                self.cash -= executed_price * self.orders_df.at[bid_index, 'quantity']
+
+            if ask_index in self.own_orders.index:
+                self.shares -= self.orders_df.at[ask_index, 'quantity']
+                self.cash += executed_price * self.orders_df.at[ask_index, 'quantity']
+
+            # Decrease the quantity and update status
+            self.orders_df.at[bid_index, 'quantity'] -= 1
+            self.orders_df.at[ask_index, 'quantity'] -= 1
+
+            if self.orders_df.at[bid_index, 'quantity'] <= 0:
+                self.orders_df.at[bid_index, 'status'] = 'executed'
+            if self.orders_df.at[ask_index, 'quantity'] <= 0:
+                self.orders_df.at[ask_index, 'status'] = 'executed'
+
+            # Refresh active bids and asks
+            active_bids = self.active_orders[self.active_orders['type'] == 'bid']
+            active_asks = self.active_orders[self.active_orders['type'] == 'ask']
+
+    def calculate_new_order_price(self):
+        # Implement logic to calculate the price of the new order
+        return random.randint(9500, 10500)  # Placeholder logic
+
+    def start_updates(self, websocket):
+        self.websocket = websocket
+        self.update_task = asyncio.create_task(self.run())
+        self.update_task.add_done_callback(self.task_done_callback)
+
+    def task_done_callback(self, task):
+        try:
+            task.result()
+        except Exception as e:
+            print(f"Exception in task: {e}")
+            raise e
+
+    def stop_updates(self):
+        if self.update_task:
+            self.update_task.cancel()
+
+    async def handle_incoming_message(self, message):
+        """
+        Handle incoming messages to add new orders and check for executions.
+        """
+        try:
+            json_message = json.loads(message)
+            action_type = json_message.get('type')
+            data = json_message.get('data')
+            # let's check if we have a function that can deal with this action type
+
+            print('*' * 50)
+            print(f"Received message: {json_message}")
+            handler = getattr(self, f'handle_{action_type}', None)
+            if handler:
+                await handler(data)
+                self.execute_orders()
+                await self.send_message('update')
+                # todo: not the best solution above but let's think later about it
+            elif action_type in ['aggressiveAsk', 'passiveAsk', 'aggressiveBid', 'passiveBid']:
+                print('are we gonna process?')
+                self.process_order(action_type)
+                self.execute_orders()
+                await self.send_message('update')
+            elif action_type == 'cancel':
+                order_uuid = data.get('uuid')
+                print(f'Cancelling order: {order_uuid}')
+                await self.cancel_order(order_uuid)
+            else:
+                print(f"Invalid message format: {message}")
+        except json.JSONDecodeError:
+            print(f"Error decoding message: {message}")
+
+    # let's deal with the follwing incoming data to add orders:
+    # {"type":"add_order","data":{"type":"ask","price":10048,"quantity":1}}
+    async def handle_add_order(self, data):
+        order_type = data.get('type')
+        price = data.get('price')
+        self.add_order(order_type, price)
+
+    async def cancel_order(self, order_uuid):
+        # Check if the order UUID exists in the DataFrame
+        if order_uuid in self.orders_df['uuid'].values:
+            # Set the status of the order to 'cancelled'
+            self.orders_df.loc[self.orders_df['uuid'] == order_uuid, 'status'] = 'cancelled'
+            await self.send_message('update')
+        else:
+            # Handle the case where the order UUID does not exist
+            print(f"Order with UUID {order_uuid} not found.")
+
+    def process_order(self, action_type):
+        # Get the current order book
+        current_order_book = self.order_book
+        price = None
+
+        if action_type == 'aggressiveAsk':
+            logger.info("# Aggressive Ask: Put an ask at the best bid level for immediate execution")
+            if current_order_book['bids']:
+                price = current_order_book['bids'][0]['x']
+        elif action_type == 'passiveAsk':
+            logger.info("# Passive Ask: Put an ask at the existing best ask level")
+            if current_order_book['asks']:
+                price = current_order_book['asks'][0]['x']
+            else:
+                price = self.default_ask_price()
+        elif action_type == 'aggressiveBid':
+            logger.info("# Aggressive Bid: Put a bid at the best ask level for immediate execution")
+            if current_order_book['asks']:
+                price = current_order_book['asks'][0]['x']
+        elif action_type == 'passiveBid':
+            logger.info("# Passive Bid: Put a bid at the existing best bid level")
+            if current_order_book['bids']:
+                price = current_order_book['bids'][0]['x']
+            else:
+                price = self.default_bid_price()
+
+        if price is not None:
+            order_type = 'ask' if 'Ask' in action_type else 'bid'
+            self.add_order(order_type, price)
+
+    def default_ask_price(self):
+        # Define a default ask price if there are no asks in the order book
+        return 10100  # Example value, adjust as needed
+
+    def default_bid_price(self):
+        # Define a default bid price if there are no bids in the order book
+        return 9500  # Example value, adjust as needed
+
+    def add_order(self, order_type, price, owner='human'):
+
+        new_order = {
+            'uuid': str(uuid.uuid4()),
+            'timestamp': time.time(),
+            'type': order_type,
+            'price': price,
+            'quantity': 1,
+            'status': 'active',
+            'owner': owner
+        }
+
+        # Convert new_order to a DataFrame and concatenate with self.orders_df
+        new_order_df = pd.DataFrame([new_order])
+        self.orders_df = pd.concat([self.orders_df, new_order_df], ignore_index=True)
+
+from pydantic import BaseModel, Field
+
+class TraderCreationData(BaseModel):
+    max_short_shares: int = Field(default=100, description="Maximum number of shares for shorting")
+    max_short_cash: float = Field(default=10000.0, description="Maximum amount of cash for shorting")
+    initial_cash: float = Field(default=1000.0, description="Initial amount of cash")
+    initial_shares: int = Field(default=0, description="Initial amount of shares")
+    trading_day_duration: int = Field(default=5, description="Duration of the trading day in minutes")
+    max_active_orders: int = Field(default=5, description="Maximum amount of active orders")
+    noise_trader_update_freq: int = Field(default=10, description="Frequency of noise traders' updates in seconds")
+    step: int = Field(default=100, description="Step for new orders")
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "max_short_shares": 100,
+                "max_short_cash": 10000.0,
+                "initial_cash": 1000.0,
+                "initial_shares": 0,
+                "trading_day_duration": 5,  # Representing 8 hours in minutes
+                "max_active_orders": 5,
+                "noise_trader_update_freq": 10,  # in seconds,
+                "step": 100
+            }
+        }
+
+
+from fastapi import FastAPI, WebSocket, HTTPException, WebSocketDisconnect
+from human_trader import HumanTrader
+from fastapi.middleware.cors import CORSMiddleware
+import uuid
+from structs import TraderCreationData
+
+class TraderManager:
+    def __init__(self):
+        self.traders = {}
+
+    def create_new_trader(self, trader_data: TraderCreationData):
+        trader = HumanTrader(trader_data)
+        self.traders[trader.uuid] = trader
+        return trader
+
+
+    def get_trader(self, trader_uuid):
+        return self.traders.get(trader_uuid)
+
+    def exists(self, trader_uuid):
+        return trader_uuid in self.traders
+
+app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
+
+
+trader_manager = TraderManager()
+
+
+@app.get("/traders/defaults")
+async def get_trader_defaults():
+    # Get the schema of the model
+    schema = TraderCreationData.schema()
+
+    # Extract default values from the schema
+    defaults = {field: props.get("default") for field, props in schema.get("properties", {}).items() if
+                "default" in props}
+
+    return {
+        "status": "success",
+        "data": defaults
+    }
+
+
+@app.post("/traders/create")
+async def create_trader(trader_data: TraderCreationData):
+    new_trader = trader_manager.create_new_trader(trader_data)
+    return {
+        "status": "success",
+        "message": "New trader created",
+        "data": {"trader_uuid": new_trader.uuid}
+    }
+
+
+
+@app.websocket("/trader/{trader_uuid}")
+async def websocket_trader_endpoint(websocket: WebSocket, trader_uuid: str):
+    await websocket.accept()
+
+    if not trader_manager.exists(trader_uuid):
+        await websocket.send_json({
+            "status": "error",
+            "message": "Trader not found",
+            "data": {}
+        })
+        await websocket.close()
+        return
+
+    trader = trader_manager.get_trader(trader_uuid)
+    trader.start_updates(websocket)
+
+    # Send current status immediately upon new connection
+    await websocket.send_json({
+        "type": "success",
+        "message": "Connected to trader",
+        "data": {
+            "trader_uuid": trader_uuid,
+            "order_book": trader.order_book,
+            "history": trader.transaction_history
+        }
+    })
+
+    try:
+        while True:
+            message = await websocket.receive_text()
+            await trader.handle_incoming_message(message)
+    except WebSocketDisconnect:
+        trader.stop_updates()
+        # Additional disconnection handling (logging, cleanup, etc.)
+
+@app.get("/traders/list")
+async def list_traders():
+    return {
+        "status": "success",
+        "message": "List of traders",
+        "data": {"traders": list(trader_manager.traders.keys())}
+    }
+
+
+@app.get("/")
+async def root():
+    return {"status": "trading is active", "comment":"this is only for accessing trading platform mostly via websockets"}
+
+
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Aug  2 10:14:44 2023
+
+@author: alessio
+"""
+
+import numpy as np
+import numba
+import datetime
+from traderabbit.custom_logger import setup_custom_logger
+import random
+
+logger = setup_custom_logger(__name__)
+
+# I list quantities that will be needed in the experiments
+# what is inside the place holder functions will be defined on a case by case basis
+
+
+# the following will be the input
+
+# settings will be defined and contain basic information
+
+# price increments are in multiples of 1 and minimum spread is 1.
+# Initial price is a settings and defines cost of transactions
+# e.g. initial price =2000 means that the minimum spread is 1/2000= 5 basis points
+
+settings = {'levels_n': 10,  # int
+            'initial_price': 2000,  # this implies a spread of 5bps
+            'stack_max_size': 2,  # int
+            'time_thresh': 1000,  # int how much to wait for a stack reset
+            'n_updates_session': 900,  # if a session is 15min, then an update every 1secs
+            'warmup_periods': 100,  # how may period we run the noise trader before starting
+            'alphas_ewma': [0., .5, .95, .98]
+            # other settings...
+            }
+
+settings_market_maker = {'n_levels': 3,  # the number of levels at which to post orders
+                         'inv_limit': 5,
+                         # total number of shared allowed: this should be a function of the thickness of the book
+                         }
+
+settings_informed = {'inv': 100}
+
+settings_noise = {'pr_order': .8,  # probability of a noise trader order arrival
+                  'pr_passive': .7,  # probability of resting order
+                  'pr_bid': .5,  # equal prob of bid or ask order }
+                  'pr_cancel': .2,  # probability of an order cancellation
+                  'levels_n': settings['levels_n'],  # it could be different
+                  'max_size_level': 3  # the largest size in a level, after that will post on the next
+                  }
+
+# this might be extended, but for definiteness assume two predicitons models only
+# models  = {'market_maker':'an sklearn fitted model for the market maker',
+#            'together with feature_ind (int/bool) for ind in features_state',
+#            'informed': 'an sklearn fitted model for the informed trader',
+#            'together with feature_ind (int/bool) for ind in features_state'}
+
+models = {'market_maker': {'model': None, 'feature_ind': None},
+          'informed': {'model': None, 'feature_ind': None}}
+
+# book: I provide the name of the columns for the sake a definiteness
+
+# these are the entries
+levels_n = int(settings['levels_n'])  # usually 10
+cols_raw = ['ask_price', 'ask_size', 'bid_price', 'bid_size']
+cols_book = [name + '_' + str(level) for level in range(1, 1 + levels_n) \
+             for name in cols_raw]
+cols_book
+
+book = {'a 2d (or 1d) array of  shape (1, len(cols_book)) and types float'}
+
+# message: I provide the name of the columns for the sake a definiteness
+
+# these are the entries
+cols_message = ['time', 'type', 'id', 'size', 'price', 'direction']
+
+message = {'a 2d (or 1d) array of  shape (1, len(cols_messsage)) and types float'}
+
+# state_count
+
+# these are the entries
+cols_state_count = ['count', 'time_delta']
+
+# state_count      = {' a 1d array of shape (len(cols_state_count),)'}
+state_count = np.array([0, 0])
+# book_stack
+
+# these are the entries
+cols_book_stack = cols_book
+
+book_stack = {"a 2d array of shape (settings['stack_max_size'],len(cols_book)) and types as book"}
+
+# message_stack
+
+# these are the entries
+cols_message_stack = cols_message
+
+message_stack = {"a 2d array of shape (settings['stack_max_size'],len(cols_message)) and types as book"}
+
+# #book_of_stack
+# cols_book_of_stack =
+# book_of_stack      = {"a 2d array of shape (settings['stack_max_size'],len(cols_message)) and types as book"}
+
+
+# features_state
+
+# these are the entries
+cols_features_state = {'they will vary: they are intermediate inputs not used by the interface'}
+
+# features_state = {"a 1d array of shape (len(cols_features_state),) and type floats"}
+n_features = 22  # This should be set to the actual number of features
+n_alphas = 3  # This should be set to the actual number of alphas
+
+features_state = np.zeros(n_alphas * n_features)
+# signals state
+
+# these are the entries
+cols_signals_state = {'they will vary: they are intermediate inputs not used by the interface',
+                      ' e.g. market_maker, informed'}
+
+signals_state = {"a 1d array (or dictionary) of shape (len(cols_signals_state,) and type floats"}
+
+# in theory a general trader state has inventory, outstanding order
+market_maker_state = {'inv': 0, 'outstanding_orders': {'bid': {}, 'ask': {}}}
+
+informed_state = {'inv': settings_informed['inv'], 'outstanding_orders': {'bid': {}, 'ask': {}}}
+
+noise_state = {'inv': None, 'outstanding_orders': {'bid': {},
+                                                   'ask': {}}}  # noise trader does not keep track if inventory but needs outstanding_orders for cancellations
+
+# example of outstanding orders format: if needed use id, but not needed, it think.
+# outstanding_orders = {'bid':{2003:4,2002:1}, 'ask': {2011:1,2016:2,2018:1}}
+# new orders are in the same format as outstanding_orders
+# queue: prices as key inside the key there is a size and an id
+# bid_queue_dict = {bid_p[i]: [[bid_s[i]], [-1]] for i in range(len(bid_p))}
+# ask_queue_dict = {ask_p[i]: [[ask_s[i]], [-1]] for i in range(len(ask_p))}
+# example of bid_queue_dict format: i use -1 for noise and some integer for other traders
+bid_queue_dict = {2003: [[4, 2], [-1, 2]], 2002: [[5], [-1]]}
+
+
+# above, at bid price 2003 there is an order of size 4 for id -1
+# and one of size 2 for id 2. Orders at given price are appended
+# at price [5] there is a size of 5 for id -1
+
+
+# functions that will be called by the interface
+
+
+# call at the start to generate additional settings: can also be treated as global outside settings
+# called only once so no need for performance
+def get_ind_from_data(cols, name2search='bid_price'):
+    ind_col = [i for i, x in enumerate(cols) if x[:len(name2search)] == name2search]
+
+    return ind_col
+
+
+ind_bid_price = get_ind_from_data(cols_book, name2search='bid_price')
+ind_bid_size = get_ind_from_data(cols_book, name2search='bid_size')
+ind_ask_price = get_ind_from_data(cols_book, name2search='ask_price')
+ind_ask_size = get_ind_from_data(cols_book, name2search='ask_size')
+
+cols_message = ['time', 'type', 'id', 'size', 'price', 'direction']
+
+ind_time = get_ind_from_data(cols_message, name2search='time')
+ind_type = get_ind_from_data(cols_message, name2search='type')
+ind_id = get_ind_from_data(cols_message, name2search='id')
+ind_size = get_ind_from_data(cols_message, name2search='size')
+ind_price = get_ind_from_data(cols_message, name2search='price')
+ind_direction = get_ind_from_data(cols_message, name2search='direction')
+
+settings.update({'ind_bid_price': ind_bid_price, 'ind_bid_size': ind_bid_size,
+                 'ind_ask_price': ind_ask_price, 'ind_ask_size': ind_ask_size,
+                 'ind_time': ind_time, 'ind_type': ind_type, 'ind_id': ind_id,
+                 'ind_size': ind_size, 'ind_price': ind_price, 'ind_direction': ind_direction})
+
+
+# anything in settings could be used as "global variable" with no settings argument in functions
+
+# call every time there is a book update
+
+def get_state_count_update(state_count, book_stack, message_stack, settings):
+    if state_count[0] > 0:
+        time = message_stack[settings['ind_time']]
+        state_count[1] = time[state_count[1]] - time[0]
+    state_count[0] += 1
+    return state_count
+
+
+def get_stack_update_1(book, message, book_stack, message_stack, state_count, settings):
+    time_thresh = settings['time_thresh']
+    stack_max_size = settings['stack_max_size']
+    count = state_count[0]
+    time_delta = state_count[1]
+    cond_reset = (time_delta >= time_thresh) or (count > stack_max_size)
+    if cond_reset:
+        count = 0
+        time_delta = 0
+        state_count = [0, 0]
+    book_stack[count] = book
+    message_stack[count] = message
+    state_count = get_state_count_update(state_count, book_stack, message_stack, settings)
+    return (book_stack, message_stack, state_count)
+
+
+def get_stack_update(book, message, book_stack, message_stack, state_count, settings):
+    # rolling stack
+    time_thresh = settings['time_thresh']
+    stack_max_size = settings['stack_max_size']
+    count = state_count[0]
+    time_delta = state_count[1]
+    cond_increse = (count < stack_max_size)
+    if cond_increse:
+        book_stack[count] = book
+        count += 1
+        state_count = [count, 0]
+    else:  # drop the first in stack and add new to the last
+        book_stack[:count - 1] = book_stack[1:]
+        book_stack[-1] = book
+        message_stack[:count - 1] = message_stack[1:]
+        message_stack[-1] = message
+    return (book_stack, message_stack, state_count)
+
+
+def get_should_update_1(state_count, settings):
+    # this is just an example: same rule as for stack in this case
+    time_thresh = settings['time_thresh']
+    stack_max_size = settings['stack_max_size']
+    count = state_count[0]
+    time_delta = state_count[1]
+    # cond_update    = (time_delta>= time_thresh) or (count>stack_max_size)
+    cond_update = True  # always update
+    return cond_update
+
+
+def get_should_update(state_count, settings):
+    # this is just an example: same rule as for stack in this case
+    time_thresh = settings['time_thresh']
+    stack_max_size = settings['stack_max_size']
+    count = state_count[0]
+    time_delta = state_count[1]
+    cond_update = (count == stack_max_size)
+    return cond_update
+
+
+# only called if output of get_should_update is true
+
+
+def transform_book(book_stack, settings):
+    levels_n = settings['levels_n']
+    book_of_stack = np.zeros((len(book_stack), levels_n))
+
+    bid_p = book_stack[:, settings['ind_bid_price']]
+    ask_p = book_stack[:, settings['ind_ask_price']]
+    bid_s = book_stack[:, settings['ind_bid_size']]
+    ask_s = book_stack[:, settings['ind_bid_size']]
+
+    dbid_p = bid_p[1:] - bid_p[:-1]
+    dask_p = bid_p[1:] - bid_p[:-1]
+
+    cond_bid_1 = dbid_p >= 0
+    cond_bid_2 = dbid_p <= 0
+
+    cond_ask_1 = dask_p >= 0
+    cond_ask_2 = dask_p <= 0
+
+    bid_of = bid_s[1:] * cond_bid_1 - bid_s[:-1] * cond_bid_2
+    ask_of = -(ask_s[1:] * cond_ask_2 - ask_s[:-1] * cond_ask_1)
+
+    # cols_b_of    = ['bid_of_'+str(x) for x in range(1,1+levels_n)]
+    # cols_a_of    = ['ask_of_'+str(x) for x in range(1,1+levels_n)]
+    # cols_of      = cols_b_of+cols_a_of
+
+    book_of_stack[1:] = bid_of + ask_of  # np.c_[bid_of,ask_of]
+    return book_of_stack
+
+
+def get_features_stack_update(features_stack, book, message, book_of, settings):
+    # performs the update: i.e. compute the latest features based on stack
+    return features_stack
+
+
+def get_features_update(features_state, book_stack, message_stack, settings, cols_ft=None):
+    features_state = list(features_state)
+    alphas = settings['alphas_ewma']
+    n_alphas = len(alphas)
+    n_features = 22  # This should be set to the actual number of features
+    n_alphas = 3  # This should be set to the actual number of alphas
+
+    features_state = np.zeros(n_alphas * n_features)
+    levels_n = settings['levels_n']
+    ind_bid_price1 = settings['ind_bid_price'][0]
+    ind_bid_price1 = settings['ind_bid_price'][0]
+    ind_ask_price1 = settings['ind_ask_price'][0]
+
+    bid_p1 = book_stack[-1, ind_bid_price1]
+    ask_p1 = book_stack[-1, ind_ask_price1]
+    bid_p1l = book_stack[-2, ind_bid_price1]
+    ask_p1l = book_stack[-2, ind_ask_price1]
+
+    mid = 0.5 * (bid_p1 + ask_p1)
+    midl = 0.5 * (bid_p1l + ask_p1l)
+
+    of = transform_book(book_stack, settings)[-1]  # if stack longer than 2, only use the latest
+    of_abs = np.abs(of)
+    dmid = 2 * (mid - midl) / (mid + midl)
+    dmid_abs = np.abs(dmid)
+
+    # signed_trd  =
+    # trd         = np.abs(signed_trd)
+
+    # features_new = np.r_[book_of,book_of_abs,dmid ,dmid_abs,signed_trd,trd ]
+
+    features_new = np.r_[of, dmid, of_abs, dmid_abs]
+    cols_features = None
+    if cols_features is None:
+        cols_of = ['of_' + str(level) for level in range(1, 1 + levels_n)]
+        cols_dmid = ['dmid']
+        cols_of_abs = [col_of + '_abs' for col_of in cols_of]
+        cols_dmid_abs = ['dmid_abs']
+        cols_features = cols_of + cols_dmid + cols_of_abs + cols_dmid_abs
+
+    n_features = len(features_new)
+
+    if features_state is None:  # no features have been computed so far
+        features_state = np.zeros((n_alphas * len(features_new),))
+        if cols_ft is not None:  # perform a check - only at the very beginning that we are computing the correct features
+            cols_of = ['of_' + str(level) for level in range(1, 1 + levels_n)]
+            cols_dmid = ['dmid']
+            cols_of_abs = [col_of + '_abs' for col_of in cols_of]
+            cols_dmid_abs = ['dmid_abs']
+            cols_features = cols_of + cols_dmid + cols_of_abs + cols_dmid_abs
+            col_features = [col_features + '_' + str(int(100 * alpha)) for alpha in alphas for col_features in
+                            cols_features]
+            if cols_ft != cols_features: raise Exception('features are not as expected: check settings')
+
+    for i in range(n_alphas):
+        alpha = alphas[i]
+
+        ewma_block_i = features_state[(i * n_features):((i + 1) * n_features)]
+        ewma_block_i = np.array(ewma_block_i)
+        features_new = np.array(features_new)
+
+        ewma_block_i = alpha * ewma_block_i + (1 - alpha) * features_new
+
+        features_state[(i * n_features):((i + 1) * n_features)] = ewma_block_i
+
+    # update features names with ewma
+
+    return features_state
+
+
+def ewma_update(ewma_val, x, alpha):
+    ew
+    for alpha in alphas:
+        ewma_val = alpha * ewma_val + (1 - alpha) * x
+    return ewma_val
+
+
+def get_model_prediction(features, model, settings):
+    """Its just a placeholder. SHould be replaced by the actual model prediction"""
+
+    return np.random.uniform(0, 1)
+
+
+def get_signal_update(features_state, models, settings):
+    # example
+    model_names = list(models.keys())
+    signals_state = np.zeros((len(model_names),))
+    for i, model_name in enumerate(model_names):
+        model = models[model_name]
+        features_ind = model['feature_ind']
+        features = features_state[features_ind]
+        model_fitted = model['model']
+        signals_state[i] = get_model_prediction(features, model, settings)
+    return signals_state
+
+
+# call every time there is a book update
+
+# unpack the signals
+
+def get_signal_market_maker(signal_state, settings_market_maker):
+    signal_market_maker = signal_state[0]  # better use some names and let signal_state be a dict
+    return signal_market_maker
+
+
+def get_signal_informed(signal_state, settings_informed):
+    signal_market_maker = signal_state[1]  # better use some names and let signal_state be a dict
+    return signal_informed
+
+
+def get_signal_noise(signal_state, settings_noise):
+    """It seems that this one is used to randomly generate events (posts: bids/asks and cancels).
+    It returns a list of parameters that are used to generate the events.
+    I personally would prefer for readability to have a function that returns a dict of parameters.
+    It's unclear for me why we need signal_state here.
+    """
+
+    pr_order = settings_noise['pr_order']
+    pr_bid = settings_noise['pr_bid']
+    pr_passive = settings_noise['pr_passive']
+    pr_cancel = settings_noise['pr_cancel']
+    features_noise = np.random.rand(7)  # could be part of features state, but makes it more complex
+
+    # is an order placed?
+    event_order = pr_order >= features_noise[0]
+    # is the order passive?
+    event_passive = pr_passive >= features_noise[1]
+    # is it on the bid?
+    event_bid = pr_bid >= features_noise[2]
+    # is an order cancelled?
+    event_cancel = pr_cancel >= features_noise[3]
+    # is cancel on bid?
+    event_bid_cancel = pr_bid >= features_noise[4]
+    # some random mumbers to choose depth if needed
+    insert_depth = features_noise[5]
+    cancel_depth = features_noise[6]
+
+    signal = [event_order, event_passive, event_bid, event_cancel, event_bid_cancel, insert_depth, cancel_depth]
+    return signal
+
+
+def get_market_maker_order(book, message, signal_market_maker, market_maker_state,
+                           settings_market_maker, settings):
+    # do someting and get order in the following format
+    # order = {'bid':{2003:4,2002:1}, 'ask': {2011:1,2016:2,2018:1}}
+    # order = {'bid':{}, 'ask': {}}#no order
+    # order = {'bid':{2003:4,2002:1}, 'ask': {}}#one side order
+    return order
+
+
+def get_informed_order(book, message, signal_informed, informed_state,
+                       settings_informed, settings):
+    # do someting and get order in the following format
+    # order = {'bid':{2003:4,2002:1}, 'ask': {2011:1,2016:2,2018:1}}
+    # order = {'bid':{}, 'ask': {}}#no order
+    # order = {'bid':{2003:4,2002:1}, 'ask': {}}#one side order
+    return order
+
+
+def get_noise_rule(book, signal_noise, noise_state, settings_noise, settings):
+    """
+       book - book state,
+       signal_noise - an array of parameters that are used to generate the events.
+       noise state - a dict with a key outstanding_orders that contains a list of outstanding orders for this specific trader
+       settings_noise - a dict with parameters for noise trader
+       settings - a dict with general parameters
+
+       If book is provided, and signal noise and trader's current state (in noise_state), then
+       it returns a list of orders to be placed (or cancelled if the quantity is negative).
+       """
+    price_name = ['ask', 'bid']
+
+    max_size_level = settings_noise['max_size_level']
+
+    event_order = signal_noise[0]
+    event_passive =  signal_noise[1]
+    event_bid = signal_noise[2]
+    event_cancel = signal_noise[3]
+    event_bid_cancel = signal_noise[4]
+
+    cancel_depth = signal_noise[6]
+
+    order = {'bid': {}, 'ask': {}}
+
+    if event_order:
+
+        ind_bid_price = settings['ind_bid_price']
+        ind_bid_size = settings['ind_bid_size']
+        ind_ask_price = settings['ind_ask_price']
+        ind_ask_size = settings['ind_ask_size']
+
+        ind_price = [ind_ask_price, ind_bid_price]
+        ind_size = [ind_ask_size, ind_bid_size]
+
+        event_bid_int = int(event_bid)
+
+        if event_passive:
+            # find the sizes and prices on the book
+            book_size = book[ind_size[event_bid_int]]
+            book_price = book[ind_price[event_bid_int]]
+            price = get_noise_condition_price(book_price, book_size, max_size_level)
+
+            if price >= 0:
+                size = 1
+                order[price_name[event_bid_int]].update({price: [size]})
+
+        else:
+            price = book[ind_price[event_bid_int][0]] + (
+                    2 * event_bid_int - 1)  # price improve: if spread is small, then it aggresses
+            size = 1
+            order[price_name[event_bid_int]].update({price: [size]})
+        price2cancel = None
+        if event_cancel:  # there is also a cancel event, irrespective of the above
+            # if there are outstanding orders, it cancels one at random
+            outstanding_orders = noise_state['outstanding_orders']
+            if event_bid_cancel:
+                outstanding_bids = outstanding_orders['bid']
+                L = len(outstanding_bids)
+                if L > 0:  # this is almost always the case
+                    ind_key = int(np.floor(cancel_depth * L))
+                    outstanding_prices = list(outstanding_bids.keys())
+                    price2cancel = outstanding_prices[ind_key]
+
+            else:
+                outstanding_asks = outstanding_orders['ask']
+                L = len(outstanding_asks)
+                if L > 0:  # this is almost always the case
+                    ind_key = int(np.floor(cancel_depth * L))
+                    outstanding_prices = list(outstanding_asks.keys())
+                    price2cancel = outstanding_prices[ind_key]
+            if price2cancel is not None:
+
+                size2cancel = -1  # negative means cancellation
+                event_bid_cancel_int = int(event_bid_cancel)
+
+                if price2cancel not in order[price_name[event_bid_cancel_int]]:
+                    order[price_name[event_bid_cancel_int]].update({price2cancel: [size2cancel]})
+                else:  # amend the existing order
+                    size_order_final = order[price_name[event_bid_cancel_int]][price2cancel][0] + size2cancel
+                    if size_order_final != 0:
+                        order[price_name[event_bid_cancel_int]][price2cancel][0] = size_order_final
+                    else:
+                        order[price_name[event_bid_cancel_int]].pop(price2cancel)  # delete, no order
+
+    return order
+
+
+def get_noise_rule_unif(book, signal_noise, noise_state, settings_noise, settings):
+    # price_name     = ['ask_price','bid_price']
+    # size_name      = ['ask_size','bid_size']
+    price_name = ['ask', 'bid']
+    price2cancel = None
+    pr_order = settings_noise['pr_order']
+    pr_bid = settings_noise['pr_bid']
+    pr_passive = settings_noise['pr_passive']
+    n_levels = settings_noise['levels_n']
+
+    max_size_level = settings_noise['max_size_level']
+
+    event_order = signal_noise[0]
+    event_passive = signal_noise[1]
+    event_bid = signal_noise[2]
+    event_cancel = signal_noise[3]
+    event_bid_cancel = signal_noise[4]
+
+    cancel_depth = signal_noise[6]
+
+    order = {'bid': {}, 'ask': {}}
+
+
+    if event_order:
+
+        ind_bid_price = settings['ind_bid_price']
+        ind_bid_size = settings['ind_bid_size']
+        ind_ask_price = settings['ind_ask_price']
+        ind_ask_size = settings['ind_ask_size']
+
+        ind_price = [ind_ask_price, ind_bid_price]
+        ind_size = [ind_ask_size, ind_bid_size]
+
+        n_levels = settings['levels_n']
+        mid = (book[ind_ask_price[0]] + book[ind_bid_price[0]]) / 2
+        edge = np.floor(np.random.rand(1) * n_levels) + 0.5*(1 + float(np.mod(mid,1)==0))
+
+        event_bid_int = int(event_bid)
+        if event_passive:
+                price = int(mid + [-2 * event_bid_int +1] * edge)
+                size = 1
+                order[price_name[event_bid_int]].update({price: [size]})
+        else:
+                price = int(mid + (2*event_bid_int -1) * np.mod(mid,1))
+                size = 2
+                order[price_name[event_bid_int]].update({price: [size]})
+
+        if event_cancel:  # there is also a cancel event, irrespective of the above
+            # if there are outstanding orders, it cancels one at random
+            outstanding_orders = noise_state['outstanding_orders']
+            if event_bid_cancel:
+                outstanding_bids = outstanding_orders['bid']
+                L = len(outstanding_bids)
+                if L > 0:  # this is almost always the case
+                    ind_key = int(np.floor(cancel_depth * L))
+                    outstanding_prices = list(outstanding_bids.keys())
+                    price2cancel = outstanding_prices[ind_key]
+
+            else:
+                outstanding_asks = outstanding_orders['ask']
+                L = len(outstanding_asks)
+                if L > 0:  # this is almost always the case
+                    ind_key = int(np.floor(cancel_depth * L))
+                    outstanding_prices = list(outstanding_asks.keys())
+                    price2cancel = outstanding_prices[ind_key]
+
+            size2cancel = -1  # negative means cancellation
+            event_bid_cancel_int = int(event_bid_cancel)
+
+            if price2cancel not in order[price_name[event_bid_cancel_int]]:
+                order[price_name[event_bid_cancel_int]].update({price2cancel: [size2cancel]})
+            else:  # amend the existing order
+                size_order_final = order[price_name[event_bid_cancel_int]][price2cancel][0] + size2cancel
+                if size_order_final != 0:
+                    order[price_name[event_bid_cancel_int]][price2cancel][0] = size_order_final
+                else:
+                    order[price_name[event_bid_cancel_int]].pop(price2cancel)  # delete, no order
+
+    return order
+
+
+def get_noise_order(book, signal_noise, noise_state,
+                    settings_noise, settings):
+    order = get_noise_rule(book, signal_noise, noise_state, settings_noise, settings)
+
+    return order
+
+
+# auxiliary: they can change and will be placed inside the other functions
+
+
+# finds the first price at which there is a size less than max_size_level, else gives -1
+# @numba.jit('float64(float64[:],float64[:], float64)', nopython=True)
+
+def get_noise_condition_price(prices, sizes, max_size_level):
+
+    # Zip the prices and sizes, then find the first pair where size is either zero or less than max_size_level
+    for p, s in zip(prices, sizes):
+        if s < max_size_level:
+            return p  # return the price of the first such pair
+
+    return -1  # if no such pair exists, return -1
+
+
+
+
+# execution code
+# this part updates the bid side of the order book using an ask price and size.
+@numba.jit(numba.types.Tuple((numba.float64[:], numba.float64, numba.float64))(numba.float64[:], numba.float64[:],
+                                                                               numba.float64, numba.float64),
+           nopython=True)
+def get_exec_sell_trd(bid_prices, bid_sizes,
+                      order_ask_price, order_ask_size):
+    bid_sizes_new = bid_sizes
+    i = 0
+    n = len(bid_sizes)
+    cond = order_ask_price <= bid_prices[i]
+    if cond:
+        exec_size = 0
+        exec_price = 0
+        order_ask_size_tot = order_ask_size
+        order_ask_size_new = order_ask_size
+
+        while cond:
+            order_ask_size = order_ask_size_new  # size to execute at level i
+            bid_size_i = bid_sizes[i] - order_ask_size  # size left on book at level i
+            bid_sizes_new[i] = np.maximum(bid_size_i, 0)  # new size in book at level i
+            order_ask_size_new = np.maximum(-bid_size_i, 0)  # residual size to execute at next level
+
+            exec_price = exec_price \
+                         + bid_prices[i] \
+                         * (order_ask_size - order_ask_size_new)  # weighted sum pe exec price
+
+            i += 1
+            cond = (order_ask_price <= bid_prices[i]) & \
+                   (order_ask_size_new > 0) & (i < n)
+            # print(order_ask_size_new)
+        exec_size = (order_ask_size_tot - order_ask_size_new)
+        exec_price = exec_price / exec_size
+    else:
+        exec_size = np.nan
+        exec_price = np.nan
+
+    return (bid_sizes_new, exec_price, exec_size)
+
+
+def get_insert_sell(ask_prices, ask_sizes,
+                    order_ask_price, order_ask_size):
+    ask_sizes_new = ask_sizes
+    ask_prices_new = ask_prices
+    n = len(ask_sizes)
+    cond = order_ask_price in ask_prices
+    if cond:
+        ind_insertion = list(ask_prices).index(order_ask_price)
+        ask_sizes_new[ind_insertion] += order_ask_size
+    elif (order_ask_price < ask_prices[0]):  # need to modify the price with new insertion if price improves
+        ask_prices_new = np.empty((n,))
+        ask_sizes_new = np.empty((n,))
+        ask_prices_new[0] = order_ask_price
+        ask_prices_new[1:] = ask_prices[:-1]
+        ask_sizes_new[0] = order_ask_size
+        ask_sizes_new[1:] = ask_sizes[:-1]
+    return (ask_prices_new, ask_sizes_new)
+
+
+# running example
+
+
+prices = np.array([10, 4, 6, 2, 3, 5, 6, 7, 1, 3]) + 0.
+sizes = np.array([10, 4, 6, 2, 3, 5, 6, 7, 1, 3]) + 0.
+max_size_level = 5
+
+
+# some test for me, ignore
+
+def get_book_message_init(best_bid, size, settings):
+    levels_n = settings['levels_n']
+    book = np.zeros((4 * levels_n,))
+    # bid_price
+    book[settings['ind_bid_price']] = np.linspace(best_bid, best_bid - 9, 10)
+    # ask_price
+    book[settings['ind_ask_price']] = np.linspace(best_bid + 1, best_bid + 10, 10)
+    # bid_size
+    book[settings['ind_bid_size']] = size * np.ones((levels_n,))
+    # ask_size
+    book[settings['ind_ask_size']] = size * np.ones((levels_n,))
+
+    # message
+    # cols_message     = ['time', 'type','id', 'size','price', 'direction']
+
+    message = np.array([0, 2, 1, 1, best_bid, 1])
+    return (book, message)
+
+
+cond = True
+iter_num = 0
+max_iter = 1000
+
+# initialise the book
+best_bid = 2009
+size = 1
+book, message = get_book_message_init(best_bid, size, settings)
+
+bid_p = book[settings['ind_bid_price']]
+ask_p = book[settings['ind_ask_price']]
+bid_s = book[settings['ind_bid_size']]
+ask_s = book[settings['ind_ask_size']]
+
+# id -1 as the book is initialised by noise traders
+bid_queue_dict = {bid_p[i]: [[bid_s[i]], [-1]] for i in range(len(bid_p))}
+ask_queue_dict = {ask_p[i]: [[ask_s[i]], [-1]] for i in range(len(ask_p))}
+
+# initialise the noise_state
+outstanding_bid_noise = {bid_p[i]: [bid_s[i]] for i in range(len(bid_p))}
+outstanding_ask_noise = {ask_p[i]: [ask_s[i]] for i in range(len(ask_p))}
+noise_state = {'outstanding_orders': {'bid': outstanding_bid_noise, 'ask': outstanding_ask_noise}}
+
+book_stack = np.zeros((settings['stack_max_size'], len(cols_book)))
+message_stack = np.zeros((settings['stack_max_size'], len(cols_message)))
+
+state_count = np.array([0, 0])
+
+tic = datetime.datetime.now()
+
+while cond:
+    book_stack, message_stack, state_count = get_stack_update(book, message,
+                                                              book_stack, message_stack,
+                                                              state_count, settings)
+
+    cond_update_auxiliary_objects = get_should_update(state_count, settings)
+    # if true run all the following processes
+    if cond_update_auxiliary_objects:  # update features and signal
+        features_state = get_features_update(features_state, book_stack, message_stack, settings)
+        signals_state = get_signal_update(features_state, models, settings)
+
+    # call each subscribed trader`
+
+    signal_noise = get_signal_noise(signals_state, settings_noise)
+    order_noise = get_noise_order(book, signal_noise, noise_state,
+                                  settings_noise, settings)
+
+    # put together all the orders: only one as we only have one trader
+
+    orders = [order_noise, -1]  # only one order with id -1, the one of noise trader
+
+    # do the matching here, modify
+    # 1. book, message
+    # it may leads to multiple updates, but only report the last one,
+    # but in message to report the type as trade if there was one and include price and size
+    # 2.bid_queue_dict, ask_queue_dict
+    # 3. the state of all the traders, including the outstanding orders
+    iter_num += 1
+    cond = iter_num < max_iter
+
+from .structures import *
+
+
+from enum import Enum, IntEnum, StrEnum
+from pydantic import BaseModel
+
+from datetime import datetime
+import uuid
+
+
+class LobsterEventType(IntEnum):
+    """For the LOBSTER data, the event type is an integer. This class maps the integer to a string.
+    See the documentation at: https://lobsterdata.com/info/DataStructure.php
+    """
+    NEW_LIMIT_ORDER = 1
+    CANCELLATION_PARTIAL = 2
+    CANCELLATION_TOTAL = 3
+    EXECUTION_VISIBLE = 4
+    EXECUTION_HIDDEN = 5
+    CROSS_TRADE = 6
+    TRADING_HALT = 7
+
+
+class ActionType(str, Enum):
+    POST_NEW_ORDER = 'add_order'
+    CANCEL_ORDER = 'cancel_order'
+    UPDATE_BOOK_STATUS = 'update_book_status'
+    REGISTER = 'register_me'
+
+
+class OrderType(IntEnum):
+    ASK = -1  #  the price a seller is willing to accept for a security
+    BID = 1  # the price a buyer is willing to pay for a security
+
+
+class OrderStatus(str, Enum):
+    BUFFERED = 'buffered'
+    ACTIVE = 'active'
+    EXECUTED = 'executed'
+    CANCELLED = 'cancelled'
+
+
+class TraderType(int, Enum):
+    NOISE = 0
+    MARKET_MAKER = 1
+    INFORMED = 2
+    HUMAN = 3
+
+
+class OrderModel(BaseModel):
+    # id: uuid.UUID
+    id: uuid.UUID
+    amount: float
+    price: float
+    status: OrderStatus
+    order_type: OrderType  # ask or bid
+    timestamp: datetime
+    # session_id: uuid.UUID
+    session_id: str  # FOR TESTING. REMOVE LATER
+    trader_id: uuid.UUID
+
+
+class TransactionModel(BaseModel):
+    id: uuid.UUID
+    bid_order_id: uuid.UUID
+    ask_order_id: uuid.UUID
+    timestamp: datetime
+    price: float
+
+
+import aio_pika
+import json
+import uuid
+from datetime import datetime
+from traderabbit.utils import ack_message
+from traderabbit.custom_logger import setup_custom_logger
+from typing import List, Dict
+from structures import OrderStatus, OrderModel, OrderType, TransactionModel, LobsterEventType
+import asyncio
+from collections import defaultdict
+from traderabbit.utils import (CustomEncoder,
+                               create_lobster_message,
+                               append_lobster_messages_to_csv,
+                               convert_to_book_format,
+                               append_order_books_to_csv,
+                               append_combined_data_to_csv
+                               )
+from asyncio import Lock, Event
+
+logger = setup_custom_logger(__name__)
+
+"""bufferization:
+
+ equalize human and algorithms. """
+class TradingSystem:
+    transactions = List[TransactionModel]
+    all_orders = Dict[uuid.UUID, Dict]
+
+    buffered_orders = Dict[uuid.UUID, Dict]
+
+    @property
+    def active_orders(self):
+        return {k: v for k, v in self.all_orders.items() if v['status'] == OrderStatus.ACTIVE}
+
+    def __init__(self, buffer_delay=5, max_buffer_releases=None):
+        """
+        buffer_delay: The delay in seconds before the Trading System processes the buffered orders.
+        """
+        # self.id = uuid.uuid4()
+        self.max_buffer_releases = max_buffer_releases
+        logger.critical(f"Max buffer releases: {self.max_buffer_releases}")
+        self.buffer_release_count = 0
+        self.buffer_release_time = None
+        self.id = "1234"  # for testing purposes
+        self.creation_time = datetime.utcnow()
+        self.all_orders = {}
+        self.buffered_orders = {}
+        self.transactions = []
+        self.broadcast_exchange_name = f'broadcast_{self.id}'
+        self.queue_name = f'trading_system_queue_{self.id}'
+        self.trader_exchange = None
+        logger.info(f"Trading System created with UUID: {self.id}. Buffer delay is: {buffer_delay} seconds")
+        self.connected_traders = {}
+        self.buffer_delay = buffer_delay
+
+        self.release_task = None
+        self.lock = Lock()
+        self.release_event = Event()
+
+    async def initialize(self):
+        self.connection = await aio_pika.connect_robust("amqp://localhost")
+        self.channel = await self.connection.channel()
+
+        await self.channel.declare_exchange(self.broadcast_exchange_name, aio_pika.ExchangeType.FANOUT,
+                                            auto_delete=True)
+        self.trader_exchange = await self.channel.declare_exchange(self.queue_name, aio_pika.ExchangeType.DIRECT,
+                                                                   auto_delete=True)
+        trader_queue = await self.channel.declare_queue(self.queue_name, auto_delete=True)
+        await trader_queue.bind(self.trader_exchange)  # bind the queue to the exchange
+        await trader_queue.consume(self.on_individual_message)  # Assuming you have a method named on_individual_message
+
+        await trader_queue.purge()
+
+    async def clean_up(self):
+        """
+        This one is mostly used for closing connections and channels opened by a trading session.
+        At this stage we also dump existing transactions and orders from the memory. In the future, we'll probably
+        dump them to a database.
+        """
+        try:
+            # Unbind the queue from the exchange (optional, as auto_delete should handle this)
+            trader_queue = await self.channel.get_queue(self.queue_name)
+            await trader_queue.unbind(self.trader_exchange)
+
+            # Close the channel and connection
+            await self.channel.close()
+            logger.info(f"Trading System {self.id} channel closed")
+            await self.connection.close()
+            logger.info(f"Trading System {self.id} connection closed")
+            #     dump transactions and orders to files
+            # await dump_transactions_to_csv(self.transactions, generate_file_name(self.id, "transactions"))
+            # Dump all_orders to CSV
+            # await dump_orders_to_csv(self.all_orders, generate_file_name(self.id, "all_orders"))
+        except Exception as e:
+            print(f"An error occurred during cleanup: {e}")
+
+    async def send_broadcast(self, message):
+        exchange = await self.channel.get_exchange(self.broadcast_exchange_name)
+        await exchange.publish(
+            aio_pika.Message(body=json.dumps(message, cls=CustomEncoder).encode()),
+            routing_key=''  # routing_key is typically ignored in FANOUT exchanges
+        )
+
+    async def send_message_to_trader(self, trader_id, message):
+        await self.trader_exchange.publish(
+            aio_pika.Message(body=json.dumps(message, cls=CustomEncoder).encode()),
+            routing_key=f'trader_{trader_id}'
+        )
+
+    async def add_order_to_buffer(self, order):
+        async with self.lock:
+            logger.info(f"Adding order to buffer: {order}")
+            trader_id = order['trader_id']
+            self.buffered_orders[trader_id] = order
+            # self.buffered_orders[trader_id] = order.model_dump()
+
+            if len(self.buffered_orders) == len(self.connected_traders):
+                self.release_event.set()
+
+            if self.release_task is None:
+                self.release_task = asyncio.create_task(self.release_buffered_orders())
+            return dict(message="Order added to buffer", order=order,
+                        # TODO: this is an ugly fix.... let's think how to deal with all that later
+                        orders=self.list_active_orders + list(self.buffered_orders.values())
+                        )
+
+    @property
+    def list_active_orders(self):
+        """ Returns a list of all active orders. When we switch to real DB or mongo, we won't need it anymore."""
+        return list(self.active_orders.values())
+
+    def get_file_name(self):
+        # todo: rename this to get_message_file_name
+        """Returns file name for messages which is a trading platform id + datetime of creation with _ as spaces"""
+        return f"{self.id}_{self.creation_time.strftime('%Y-%m-%d_%H-%M-%S')}"
+
+    async def place_order(self, order_dict: Dict, trader_id: uuid.UUID):
+        """ This one is called by handle_add_order, and is the one that actually places the order in the system.
+        It adds automatically - we do all the validation (whether a trader allowed to place an order, etc) in the
+        handle_add_order method.
+        """
+        order_id = order_dict['id']
+        timestamp = order_dict['timestamp']
+        order_dict.update({
+            'status': OrderStatus.ACTIVE.value,
+        })
+        self.all_orders[order_id] = order_dict
+
+        return order_dict
+
+    def register_message(self, order, event_type):
+        # Generate lobster message
+
+        lobster_message = create_lobster_message(order, event_type=event_type,
+                                         trader_type=self.connected_traders[order['trader_id']]['trader_type'],
+                                         timestamp=order['timestamp'])
+
+        # Generate book record using convert_to_book_format directly
+        book_record = convert_to_book_format(self.active_orders.values())
+
+        combined_row = {
+            'message': lobster_message,
+            'book_record': book_record,
+            'original_timestamp': order['original_timestamp'].timestamp(),  # Include original timestamp
+            'buffer_release_timestamp': order['timestamp'].timestamp() , # Include buffer release timestamp
+            'buffer_release_count': self.buffer_release_count,
+        }
+        # Add parent_id to combined_row if it exists in the order
+        if 'parent_id' in order:
+            combined_row['parent_id'] = order['parent_id']
+        return combined_row
+
+    async def handle_transaction_for_order(self, order_id, combined_data):
+        clear_result = await self.clear_orders()  # Attempt to clear orders and process transactions
+
+        # Initialize the container for transactions
+        if clear_result is None:
+            clear_result = {'transactions': [], 'removed_active_orders': []}
+        transactions = clear_result['transactions']
+        removed_order_ids = clear_result['removed_active_orders']
+
+        # Handle transactions logging
+        for transaction in transactions:
+            # Determine the most recent order (ask or bid) based on the timestamp
+            ask_order = self.all_orders[transaction['ask_order_id']]
+            bid_order = self.all_orders[transaction['bid_order_id']]
+            most_recent_order = ask_order if ask_order['timestamp'] > bid_order['timestamp'] else bid_order
+
+            # Create and append the transaction message
+            combined_row = self.register_message(most_recent_order, LobsterEventType.EXECUTION_VISIBLE)
+            combined_data.append(combined_row)
+
+        # If no transaction was made, register the order
+        if str(order_id) not in removed_order_ids:
+            combined_row = self.register_message(self.all_orders[order_id], LobsterEventType.NEW_LIMIT_ORDER)
+            combined_data.append(combined_row)
+
+        return combined_data  # Return the updated combined_data
+
+    async def release_buffered_orders(self):
+        logger.info(f'total amount of buffered orders: {len(self.buffered_orders)}')
+        """checks if the buffer is full and releases the orders if it is."""
+        sleep_task = asyncio.create_task(asyncio.sleep(self.buffer_delay))
+        release_event_task = asyncio.create_task(self.release_event.wait())
+        """d"""
+
+        await asyncio.wait([sleep_task,
+                            release_event_task
+                            ], return_when=asyncio.FIRST_COMPLETED)
+
+        async with self.lock:
+            logger.info(f'we start releasing orders. total amount to release: {len(self.buffered_orders)}')
+
+            self.buffer_release_time = datetime.utcnow()
+            logger.info(f"Buffer release time: {self.buffer_release_time.timestamp()}")
+            combined_data = []
+            for trader_id, order_dict in self.buffered_orders.items():
+                # lets create a temp list where we'll put ids of single orders OR splitted orders if amount>1
+                temp_order_ids = []
+                # Set the timestamp for the order
+                order_dict['original_timestamp'] = order_dict['timestamp']
+                order_dict['timestamp'] = self.buffer_release_time
+
+                order_amount = order_dict['amount']
+                """d"""
+                if order_amount > 1:
+                    """d"""
+                    for _ in range(order_amount):
+                        split_order = order_dict.copy()
+                        split_order['parent_id'] = order_dict['id']
+                        split_order['id'] = uuid.uuid4()  # Generate a new UUID for each split order
+                        # Add the split order to the temp list
+                        temp_order_ids.append(split_order['id'])
+                        split_order['amount'] = 1
+                        logger.info(f'Placing split order: {split_order}')
+                        await self.place_order(split_order, trader_id)
+                        combined_data = await self.handle_transaction_for_order(split_order['id'], combined_data)
+                else:
+                    # Add the order to the temp list
+                    temp_order_ids.append(order_dict['id'])
+                    logger.info(f'Placing order: {order_dict}')
+                    await self.place_order(order_dict, trader_id)
+                    combined_data = await self.handle_transaction_for_order(order_dict['id'], combined_data)
+
+
+            logger.info(f"Total of {len(self.buffered_orders)} orders released from buffer")
+            # Clear orders and get transactions and ids of removed orders
+            if combined_data:
+                await append_combined_data_to_csv(combined_data, self.get_file_name())
+
+            # Clear the buffered orders
+            self.buffered_orders.clear()
+
+            self.release_task = None  # Reset the task so it can be recreated
+            self.release_event.clear()  # Reset the event
+            # TODO: let's think about the depth of the order book to send; and also do we need all transactions??
+            await self.send_broadcast(message=dict(message="Buffer released",
+                                                   # TODO: this is an ugly fix.... let's think how to deal with all that later
+                                                   orders=self.list_active_orders + list(self.buffered_orders.values())
+                                                   ))
+
+            # Increment the buffer release count
+
+            self.buffer_release_count += 1
+            logger.critical(f"Buffer release count: {self.buffer_release_count}")
+
+    def check_counters(self):
+
+        """ Checks if the buffer release count exceeds the limit. """
+        logger.info(f'self.buffer_release_count {self.buffer_release_count}')
+        if self.max_buffer_releases is not None and self.buffer_release_count >= self.max_buffer_releases:
+            return True
+        return False
+
+    async def clear_orders(self):
+        res = {'transactions': [], 'removed_active_orders': []}
+        logger.info(f'Total amount of active orders: {len(self.active_orders)}')
+        # Separate active orders into asks and bids
+        asks = [order for order in self.active_orders.values() if order['order_type'] == OrderType.ASK.value]
+        bids = [order for order in self.active_orders.values() if order['order_type'] == OrderType.BID.value]
+
+        # Sort by price (lowest first for asks), and then by timestamp (oldest first - FIFO)
+        # TODO: remember that this is FIFO. We need to adjust the rule (or make it adjustable in the config) if we want
+        asks.sort(key=lambda x: (x['price'], x['timestamp']))
+        # Sort by price (highest first for bids), and then by timestamp (oldest first)
+        bids.sort(key=lambda x: (-x['price'], x['timestamp']))
+
+        # Calculate the spread
+        if asks and bids:
+            lowest_ask = asks[0]['price']
+            highest_bid = bids[0]['price']
+            spread = lowest_ask - highest_bid
+        else:
+            logger.info("No overlapping orders.")
+            return res
+
+        # Check if any transactions are possible
+        if spread > 0:
+            logger.info(
+                f"No overlapping orders. Spread is positive: {spread}. Lowest ask: {lowest_ask}, highest bid: {highest_bid}")
+
+            return res
+
+        logger.info(f"Spread: {spread}")
+        # Filter the bids and asks that could be involved in a transaction
+        viable_asks = [ask for ask in asks if ask['price'] <= highest_bid]
+        viable_bids = [bid for bid in bids if bid['price'] >= lowest_ask]
+        logger.info(f'Viable asks: {len(viable_asks)}')
+        logger.info(f'Viable bids: {len(viable_bids)}')
+        to_remove = []
+        transactions = []
+
+        # Create transactions
+        while viable_asks and viable_bids:
+            ask = viable_asks.pop(0)
+            bid = viable_bids.pop(0)
+
+            # Change the status to 'EXECUTED' in the all_orders dictionary
+            self.all_orders[ask['id']]['status'] = OrderStatus.EXECUTED.value
+            self.all_orders[bid['id']]['status'] = OrderStatus.EXECUTED.value
+            timestamp = datetime.utcnow()
+
+            # Create a transaction
+            transaction_price = (ask['price'] + bid['price']) / 2  # Mid-price
+            transaction = TransactionModel(
+                id=uuid.uuid4(),
+                bid_order_id=bid['id'],
+                ask_order_id=ask['id'],
+                timestamp=timestamp,
+                price=transaction_price
+            )
+            logger.info(f"Transaction created: {transaction.model_dump()}")
+            transactions.append(transaction.model_dump())
+
+            to_remove.extend([str(ask['id']), str(bid['id'])])
+
+        # Add transactions to self.transactions
+        self.transactions.extend(transactions)
+
+        # Log the number of cleared and transacted orders
+        logger.info(f"Cleared {len(to_remove)} orders.")
+        logger.info(f"Created {len(transactions)} transactions.")
+        res['removed_active_orders'] = to_remove
+        res['transactions'] = transactions
+        return res
+
+    async def handle_add_order(self, data: dict):
+        # TODO: Validate the order
+        trader_id = data.get('trader_id')
+        clean_order = {
+            'id': uuid.uuid4(),
+            'status': OrderStatus.BUFFERED.value,
+            'for_execution_only': data.get('for_execution_only', False),
+            'amount': data.get('amount'),
+            'price': data.get('price'),
+            'order_type': data.get('order_type'),
+            'timestamp': datetime.utcnow(),
+            # we add the timestamp here but when we release an order out of the buffer we set a common tiestmap for them that points to the release time.
+            'session_id': self.id,
+            'trader_id': trader_id
+        }
+        resp = await self.add_order_to_buffer(clean_order)
+        if resp:
+            logger.info(f'Total active orders: {len(self.active_orders)}')
+
+        return dict(respond=True, **resp)
+
+    async def handle_cancel_order(self, data: dict):
+        order_id = data.get('order_id')
+        trader_id = data.get('trader_id')
+
+        # Ensure order_id is a valid UUID
+        try:
+            order_id = uuid.UUID(order_id)
+        except ValueError:
+            logger.warning(f"Invalid order ID format: {order_id}.")
+            return {"status": "failed", "reason": "Invalid order ID format"}
+
+        async with self.lock:
+            # Check if the order exists and belongs to the trader
+            if order_id not in self.active_orders:
+                return {"status": "failed", "reason": "Order not found"}
+
+            existing_order = self.active_orders[order_id]
+
+            if existing_order['trader_id'] != trader_id:
+                logger.warning(f"Trader {trader_id} does not own order {order_id}.")
+                return {"status": "failed", "reason": "Trader does not own the order"}
+
+            if existing_order['status'] != OrderStatus.ACTIVE.value:
+                logger.warning(f"Order {order_id} is not active and cannot be canceled.")
+                return {"status": "failed", "reason": "Order is not active"}
+
+            # Cancel the order
+            timestamp = datetime.utcnow()
+            self.all_orders[order_id]['status'] = OrderStatus.CANCELLED.value
+
+            # Create a combined row for the cancel event
+            combined_row = self.register_message(existing_order,  LobsterEventType.CANCELLATION_TOTAL)
+
+            # Append the combined row to the CSV
+            await append_combined_data_to_csv([combined_row], self.get_file_name())
+
+            logger.info(f"Order {order_id} has been canceled for trader {trader_id}.")
+
+            # Broadcast the cancellation, implementation may vary based on your system's logic
+            await self.broadcast_order_cancellation(trader_id)
+
+            return {"status": "cancel success", "order": order_id, "respond": True}
+
+    async def broadcast_order_cancellation(self, trader_id):
+        # Implementation for broadcasting order cancellation
+        # Note: Make sure self.list_active_orders and self.buffered_orders reflect the current state after cancellation
+        await self.send_broadcast(message=dict(message="Order is cancelled",
+                                               orders=self.list_active_orders + list(self.buffered_orders.values())))
+
+    async def handle_update_book_status(self, order):
+        """This one returns the most recent book to the trader who requested it.
+        TODO: now we just stupidly pass all active orders. We need to filter them based on the trader_id, perhaps
+        we'll generate a proper book (with prices-levels) here. but not now.
+        """
+        trader_id = order.get('trader_id')
+        if trader_id:
+            return {"status": "success", "respond": True, "orders": self.active_orders.values()}
+
+    async def handle_register_me(self, msg_body):
+        trader_id = msg_body.get('trader_id')
+        self.connected_traders[trader_id] = {'trader_type': msg_body.get('trader_type'), }
+        logger.info(f"Trader {trader_id} connected.")
+        logger.info(f"Total connected traders: {len(self.connected_traders)}")
+
+    @ack_message
+    async def on_individual_message(self, message):
+
+        incoming_message = json.loads(message.body.decode())
+        logger.info(f"TS {self.id} received message: {incoming_message}")
+        action = incoming_message.pop('action', None)
+        trader_id = incoming_message.get('trader_id', None)  # Assuming the trader_id is part of the message
+
+        handler_method = getattr(self, f"handle_{action}", None)
+        if action:
+            if handler_method:
+                result = await handler_method(incoming_message)
+                if result and result.pop('respond', None) and trader_id:
+                    await self.send_message_to_trader(trader_id, result)
+
+            else:
+                logger.warning(f"No handler method found for action: {action}")
+        else:
+            logger.warning(f"No action found in message: {incoming_message}")
+
+    async def run(self):
+        """ Keeps system active. Stops if the buffer release limit is reached. """
+        try:
+            while True:
+                logger.info('Checking counters...')
+                if self.check_counters():
+                    logger.critical('Counter limit reached, stopping...')
+                    break
+                await asyncio.sleep(1)
+            logger.critical('Exited the run loop.')
+        except Exception as e:
+            # Handle the exception here
+            logger.error(f"Exception in trading session run: {e}")
+            # Optionally re-raise the exception if you want it to be propagated
+            raise
+
+import asyncio
+import argparse
+from traderabbit.custom_logger import setup_custom_logger
+from traderabbit.trader import Trader
+from traderabbit.trading_platform import TradingSystem
+import signal
+from structures.structures import TraderType
+import random
+import numpy as np
+logger = setup_custom_logger(__name__)
+
+
+
+# Define the Argument Parser
+parser = argparse.ArgumentParser(description='Your Script Description')
+
+# Define Arguments
+parser.add_argument('--buffer_delay', type=int, default=0, help='Buffer delay for the Trading System')
+parser.add_argument('--max_buffer_releases', type=int, default=None, help='Maximum number of buffer releases')
+parser.add_argument('--num_traders', type=int, default=3, help='Number of traders')
+parser.add_argument('--seed', type=int, help='Seed for the random number generator', default=None)
+
+
+async def main(trading_system, traders=()):
+    await trading_system.initialize()
+    trading_session_uuid = trading_system.id
+    logger.info(f"Trading session UUID: {trading_session_uuid}")
+
+    for trader in traders:
+        await trader.initialize()
+        await trader.connect_to_session(trading_session_uuid=trading_session_uuid)
+
+    await trading_system.send_broadcast({"content": "Market is open"})
+
+    trading_system_task = asyncio.create_task(trading_system.run())
+    trader_tasks = [asyncio.create_task(i.run()) for i in traders]
+
+    await trading_system_task
+
+
+    # Once the trading system has stopped, cancel all trader tasks
+    for task in trader_tasks:
+        task.cancel()
+
+    # Optionally, wait for all trader tasks to be cancelled
+    try:
+        await asyncio.gather(*trader_tasks, return_exceptions=True)
+    except Exception:
+        # Handle the propagated exception here (e.g., log it, perform cleanup)
+        # Optionally re-raise the exception
+        raise
+
+async def async_handle_exit(loop, trading_system=None, traders=()):
+    if trading_system:
+        await trading_system.clean_up()
+    for i in traders:
+        await i.clean_up()
+
+    # Cancel all running tasks
+    for task in asyncio.all_tasks(loop=loop):
+        task.cancel()
+        print('task cancelled!')
+
+    # Allow time for the tasks to cancel
+    await asyncio.sleep(1)
+
+    loop.stop()
+
+def handle_exit(loop, trading_system=None, traders=()):
+    loop.create_task(async_handle_exit(loop, trading_system, traders))
+
+def custom_exception_handler(loop, context):
+    # First, handle the exception however you want
+    logger.critical(f"Caught an unhandled exception: {context['exception']}")
+    # Then, stop the event loop
+    loop.stop()
+    
+    
+
+async def main_with_timeout(trading_system, traders, timeout_seconds=5):
+    try:
+        # Wrap the main coroutine with wait_for to enforce a timeout
+        await asyncio.wait_for(main(trading_system, traders), timeout=timeout_seconds)
+    except asyncio.TimeoutError:
+        print("The main function has timed out after", timeout_seconds, "seconds")
+
+async def appmap():
+    loop = asyncio.get_event_loop()
+    loop.set_exception_handler(custom_exception_handler)
+    args = parser.parse_args()
+
+    # Set the seed here
+    if args.seed is not None:
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+    # Use the Arguments
+    trading_system = TradingSystem(buffer_delay=args.buffer_delay, max_buffer_releases=args.max_buffer_releases)
+    traders = [Trader(trader_type=TraderType.NOISE) for _ in range(args.num_traders)]
+    # Initialize TradingSystem with the buffer delay and optionally the max_buffer_releases
+
+    # Add the signal handler for Ctrl+C and SIGTERM
+    signal.signal(signal.SIGINT, lambda *args: handle_exit(loop, trading_system, traders))
+    signal.signal(signal.SIGTERM, lambda *args: handle_exit(loop, trading_system, traders))
+
+    # loop.run_until_complete(main(trading_system, traders))  # Your main async function
+    
+    await main_with_timeout(trading_system, traders, timeout_seconds=5)
+    
+    
+if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
+    loop.set_exception_handler(custom_exception_handler)
+    args = parser.parse_args()
+
+    # Set the seed here
+    if args.seed is not None:
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+    # Use the Arguments
+    trading_system = TradingSystem(buffer_delay=args.buffer_delay, max_buffer_releases=args.max_buffer_releases)
+    traders = [Trader(trader_type=TraderType.NOISE) for _ in range(args.num_traders)]
+    # Initialize TradingSystem with the buffer delay and optionally the max_buffer_releases
+
+    # Add the signal handler for Ctrl+C and SIGTERM
+    signal.signal(signal.SIGINT, lambda *args: handle_exit(loop, trading_system, traders))
+    signal.signal(signal.SIGTERM, lambda *args: handle_exit(loop, trading_system, traders))
+
+    loop.run_until_complete(main(trading_system, traders))  # Your main async function
+
+
+
+import asyncio
+import aio_pika
+import json
+import uuid
+import random
+from structures.structures import OrderModel, OrderStatus, OrderType, ActionType, TraderType
+from datetime import datetime
+from traderabbit.utils import ack_message, convert_to_noise_state, convert_to_book_format, convert_to_trader_actions
+from traderabbit.custom_logger import setup_custom_logger
+from pprint import pprint
+from traders.noise_trader import get_noise_rule, get_signal_noise, settings_noise, settings, get_noise_rule_unif
+import numpy as np
+
+logger = setup_custom_logger(__name__)
+
+
+class Trader:
+    orders = []
+    all_orders = []
+    transactions = []
+
+    def __init__(self, trader_type: TraderType):
+        self.trader_type = trader_type.value
+        self.id = str(uuid.uuid4())
+        print(f"Trader created with UUID: {self.id}")
+        self.connection = None
+        self.channel = None
+        self.trading_session_uuid = None
+        self.trader_queue_name = f'trader_{self.id}'  # unique queue name based on Trader's UUID
+        print(f"Trader queue name: {self.trader_queue_name}")
+        self.queue_name = None
+        self.broadcast_exchange_name = None
+        self.trading_system_exchange = None
+
+    async def initialize(self):
+        self.connection = await aio_pika.connect_robust("amqp://localhost")
+        self.channel = await self.connection.channel()
+        await self.channel.declare_queue(self.trader_queue_name, auto_delete=True)
+
+    async def clean_up(self):
+        try:
+            # Close the channel and connection
+            if self.channel:
+                await self.channel.close()
+                logger.info(f"Trader {self.id} channel closed")
+            if self.connection:
+                await self.connection.close()
+                logger.info(f"Trader {self.id} connection closed")
+
+        except Exception as e:
+            print(f"An error occurred during Trader cleanup: {e}")
+
+    async def connect_to_session(self, trading_session_uuid):
+        self.trading_session_uuid = trading_session_uuid
+        self.queue_name = f'trading_system_queue_{self.trading_session_uuid}'
+        self.trader_queue_name = f'trader_{self.id}'  # unique queue name based on Trader's UUID
+
+        self.broadcast_exchange_name = f'broadcast_{self.trading_session_uuid}'
+
+        # Subscribe to group messages
+        broadcast_exchange = await self.channel.declare_exchange(self.broadcast_exchange_name,
+                                                                 aio_pika.ExchangeType.FANOUT,
+                                                                 auto_delete=True)
+        broadcast_queue = await self.channel.declare_queue("", auto_delete=True)
+        await broadcast_queue.bind(broadcast_exchange)
+        await broadcast_queue.consume(self.on_message)
+
+        # For individual messages
+        self.trading_system_exchange = await self.channel.declare_exchange(self.queue_name,
+                                                                           aio_pika.ExchangeType.DIRECT,
+                                                                           auto_delete=True)
+        trader_queue = await self.channel.declare_queue(
+            self.trader_queue_name,
+            auto_delete=True
+        )  # Declare a unique queue for this Trader
+        await trader_queue.bind(self.trading_system_exchange, routing_key=self.trader_queue_name)
+        await trader_queue.consume(self.on_message)  # Assuming you have a method named on_message
+
+        await self.register()  # Register with the trading system
+
+    async def register(self):
+        message = {
+            'action': ActionType.REGISTER.value,
+            'trader_type': self.trader_type
+        }
+
+        await self.send_to_trading_system(message)
+
+    async def send_to_trading_system(self, message):
+        # we add to any message the trader_id
+        message['trader_id'] = str(self.id)
+        await self.trading_system_exchange.publish(
+            aio_pika.Message(body=json.dumps(message).encode()),
+            routing_key=self.queue_name  # Use the dynamic queue_name
+        )
+
+    @ack_message
+    async def on_message(self, message):
+        """This method is called whenever a message is received by the Trader"""
+
+        resp = json.loads(message.body.decode())
+        # logger.info(f"Trader {self.id} received message: {resp}")
+        #     # TODO: the following two lines are currently some artefacts, they should be removed later.
+        #     # currently we broadcast the updated active orders and transactions to all traders.
+        #     # in the future we should only broadcast the updated order book and let the traders decide
+        #     # because now it is totally deanonymized; it is a bad idea to broadcast all the orders and transactions
+
+        if resp.get('orders'):
+            self.all_orders = resp.get('orders')
+            self.orders = self.get_my_orders(self.all_orders)
+
+    async def request_order_book(self):
+        message = {
+            "action": ActionType.UPDATE_BOOK_STATUS.value,
+        }
+
+        await self.send_to_trading_system(message)
+
+    async def post_new_order(self,
+                             amount, price, order_type: OrderType
+                             ):
+        # todo: here we should call a generating function passing there the current book state etc,
+        # and it will return price, amount, order_type
+
+        # TODO: all the following should be removed, it's now only for generating some prices for bids and asks
+
+        new_order = {
+
+            "action": ActionType.POST_NEW_ORDER.value,
+            "amount": amount,
+            "price": price,
+            "order_type": order_type.value,
+        }
+
+        resp = await self.send_to_trading_system(new_order)
+
+        logger.debug(f"Trader {self.id} posted new {order_type} order: {new_order}")
+
+    def get_my_transactions(self, transactions):
+        """filter full transactions to get only mine"""
+        return [transaction for transaction in transactions if transaction['trader_id'] == self.id]
+
+    def get_my_orders(self, orders):
+        """filter full orders to get only mine.
+        TODO: we won't need it if/when TS will send only my orders to me"""
+
+        return [order for order in orders if order['trader_id'] == self.id]
+
+    async def send_cancel_order_request(self, order_id: uuid.UUID):
+        cancel_order_request = {
+            "action": ActionType.CANCEL_ORDER.value,  # Assuming you have an ActionType Enum
+            "trader_id": self.id,
+            "order_id": order_id
+        }
+
+        response = await self.send_to_trading_system(cancel_order_request)
+        # TODO: deal with response if needed (what if order is already cancelled? what is a part of transaction?
+        #  what if order is not found? what if order is not yours?)
+        logger.warning(f"Trader {self.id} sent cancel order request: {cancel_order_request}")
+
+    async def find_and_cancel_order(self, price):
+        """finds the order with the given price and cancels it"""
+        for order in self.orders:
+            if order['price'] == price:
+                await self.send_cancel_order_request(order['id'])
+                self.orders.remove(order)
+                return
+
+        logger.warning(f"Trader {self.id} tried to cancel order with price {price} but it was not found")
+        logger.warning(f'Available prices are: {[order.get("price") for order in self.orders]}')
+
+    async def run(self):
+        try:
+            while True:
+                orders_to_do = self.generate_noise_orders()
+                for order in orders_to_do:
+                    if order['action_type'] == ActionType.POST_NEW_ORDER.value:
+                        order_type_str = order['order_type']
+                        order_type_value = OrderType[order_type_str.upper()]
+                        await self.post_new_order(order['amount'], order['price'], order_type_value)
+                    elif order['action_type'] == ActionType.CANCEL_ORDER.value:
+                        await self.find_and_cancel_order(order['price'])
+
+                await asyncio.sleep(0.5)  # LEt's post them every second. TODO: REMOVE THIS
+        except Exception as e:
+            # Handle the exception here
+            logger.error(f"Exception in trader run: {e}")
+            # Optionally re-raise the exception if you want it to be propagated
+            raise
+
+    def generate_noise_orders(self):
+        # Convert the active orders to the book format understood by get_noise_rule
+
+        book_format = convert_to_book_format(self.all_orders)
+        # logger.critical(f"Book format: {list(book_format)}")
+        #
+        # # Convert the trader's state to the noise_state format
+        noise_state = convert_to_noise_state(self.orders)  # Assuming you have this method
+        #
+        # # Get the noise signal
+        signal_noise = get_signal_noise(signal_state=None, settings_noise=settings_noise)
+        #
+        # # Generate noise orders
+        # noise_orders = get_noise_rule(book_format, signal_noise, noise_state, settings_noise, settings)
+        # noise_orders = get_noise_rule(book_format, signal_noise, noise_state, settings_noise, settings)
+        noise_orders = get_noise_rule_unif(book_format, signal_noise, noise_state, settings_noise, settings)
+        converted_noise_orders = convert_to_trader_actions(noise_orders)
+
+        return converted_noise_orders
+
+
+# custom_logger.py
+
+from termcolor import colored
+import logging
+import os
+CUR_LEVEL = logging.DEBUG
+class CustomFormatter(logging.Formatter):
+    COLORS = {
+        'WARNING': 'yellow',
+        'INFO': 'cyan',
+        'DEBUG': 'blue',
+        'CRITICAL': 'red',
+        'ERROR': 'red'
+    }
+
+    def format(self, record):
+        log_message = super(CustomFormatter, self).format(record)
+        return colored(log_message, self.COLORS.get(record.levelname))
+
+
+def setup_custom_logger(name, log_directory="logs"):
+    # Create log directory if it doesn't exist
+    if not os.path.exists(log_directory):
+        os.makedirs(log_directory)
+
+    logger = logging.getLogger(name)
+    logger.setLevel(CUR_LEVEL)
+
+    # Console Handler
+    ch = logging.StreamHandler()
+    ch.setLevel(CUR_LEVEL)
+
+    # File Handler
+    fh = logging.FileHandler(os.path.join(log_directory, f"{name}.log"))
+    fh.setLevel(CUR_LEVEL)
+
+    formatter = CustomFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+    ch.setFormatter(formatter)
+    fh.setFormatter(formatter)
+
+    logger.addHandler(ch)
+    logger.addHandler(fh)
+
+    return logger
+
+
+from json import JSONEncoder
+from datetime import datetime
+from functools import wraps
+import aio_pika
+from enum import Enum
+from pprint import pprint
+from enum import IntEnum
+from uuid import UUID
+from structures.structures import OrderModel, OrderType, ActionType, LobsterEventType
+from collections import defaultdict
+from typing import List, Dict
+import pandas as pd
+import numpy as np
+import asyncio
+import os
+import csv
+from traderabbit.custom_logger import setup_custom_logger
+from traders.noise_trader import settings
+
+np.set_printoptions(floatmode='fixed', precision=0)
+
+logger = setup_custom_logger(__name__)
+
+dict_keys = type({}.keys())
+dict_values = type({}.values())
+DATA_PATH = 'data'
+LOBSTER_MONEY_CONSTANT = 1
+
+
+class CustomEncoder(JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, OrderModel):
+            return obj.model_dump()
+        if isinstance(obj, UUID):
+            return str(obj)
+        if isinstance(obj, Enum):
+            return obj.value
+        if isinstance(obj, dict_keys):
+            return list(obj)
+        if isinstance(obj, dict_values):
+            return list(obj)
+        return JSONEncoder.default(self, obj)
+
+
+def ack_message(func):
+    @wraps(func)
+    async def wrapper(self, message: aio_pika.IncomingMessage):
+        await func(self, message)
+        await message.ack()
+
+    return wrapper
+
+
+def expand_dataframe(df, max_depth=10, step=1, reverse=False, default_price=0):
+    """
+    Expand a DataFrame to a specified max_depth.
+
+    Parameters:
+        df (DataFrame): DataFrame containing 'price' and 'amount' columns.
+        max_depth (int, optional): Maximum length to which the DataFrame should be expanded. Default is 10.
+        step (int, optional): Step to be used for incrementing the price levels. Default is 1.
+        reverse (bool, optional): Whether to reverse the order of the DataFrame. Default is False.
+        default_price (float, optional): Default starting price if DataFrame is empty. Default is 0.
+
+    Returns:
+        DataFrame: Expanded DataFrame.
+    """
+
+    # Check if DataFrame is empty
+    if df.empty:
+        df = pd.DataFrame({'price': [default_price], 'amount': [0]})
+
+    # Sort the DataFrame based on 'price'
+    df = df.sort_values('price', ascending=not reverse)
+
+    # Sort the DataFrame based on 'price'
+    df.sort_values('price', ascending=not reverse, inplace=True)
+
+    # Calculate the number of additional rows needed
+    additional_rows_count = max_depth - len(df)
+
+    if additional_rows_count <= 0:
+        return df.iloc[:max_depth]
+
+    # Determine the direction of the step based on 'reverse'
+    step_direction = -1 if reverse else 1
+
+    # Generate additional elements for price levels
+    last_price = df['price'].iloc[-1 if reverse else 0]
+    existing_prices = set(df['price'].values)
+    additional_price_elements = []
+
+    i = 1
+    while len(additional_price_elements) < additional_rows_count:
+        new_price = last_price + i * step * step_direction
+        if new_price not in existing_prices:
+            additional_price_elements.append(new_price)
+            existing_prices.add(new_price)
+        i += 1
+    # Generate additional elements for amount (all zeros)
+    additional_amount_elements = [0] * additional_rows_count
+
+    # Create a DataFrame for the additional elements
+    df_additional = pd.DataFrame({'price': additional_price_elements, 'amount': additional_amount_elements})
+
+    # Concatenate the original DataFrame with the additional elements
+    df_expanded = pd.concat([df, df_additional]).reset_index(drop=True)
+
+    # Sort the DataFrame based on 'price' if 'reverse' is True
+    if reverse:
+        df_expanded.sort_values('price', ascending=False, inplace=True)
+        df_expanded.reset_index(drop=True, inplace=True)
+
+    return df_expanded
+
+
+class OrderType(IntEnum):
+    ASK = -1  # sell
+    BID = 1  # buy
+
+
+def convert_to_book_format(active_orders, levels_n=10, default_price=2000):
+    # Create a DataFrame from the list of active orders
+
+    if active_orders:
+        df = pd.DataFrame(active_orders)
+    else:
+        # Create an empty DataFrame with default columns
+        df = pd.DataFrame(columns=[field for field in OrderModel.__annotations__])
+    df['price'] = df['price'].round(5)
+    df = df.astype({"price": int, "amount": int})
+
+    # Aggregate orders by price, summing the amounts
+    df_asks = df[df['order_type'] == OrderType.ASK.value].groupby('price')['amount'].sum().reset_index().sort_values(
+        by='price').head(
+        levels_n)
+    df_bids = df[df['order_type'] == OrderType.BID.value].groupby('price')['amount'].sum().reset_index().sort_values(
+        by='price',
+        ascending=False).head(
+        levels_n)
+
+    df_asks = expand_dataframe(df_asks, max_depth=10, step=1, reverse=False, default_price=default_price)
+    df_bids = expand_dataframe(df_bids, max_depth=10, step=1, reverse=True, default_price=default_price - 1)
+
+    ask_prices = df_asks['price'].tolist()
+
+    ask_quantities = df_asks['amount'].tolist()
+    bid_prices = df_bids['price'].tolist()
+
+    bid_quantities = df_bids['amount'].tolist()
+
+    # Interleave the lists using np.ravel and np.column_stack
+    interleaved_array = np.ravel(np.column_stack((ask_prices, ask_quantities, bid_prices, bid_quantities)))
+    interleaved_array = interleaved_array.astype(np.float64)
+    return interleaved_array
+
+
+def _append_combined_data_to_csv(combined_data, file_name):
+    try:
+        csv_file_path = os.path.join(DATA_PATH, f"combined_{file_name}.csv")
+
+        # Check if the file exists to decide if headers need to be written
+        write_header = not os.path.exists(csv_file_path)
+
+        with open(csv_file_path, 'a', newline='') as csvfile:
+            lobster_message_fields = ['Trader type',  'Event Type', 'Order ID', 'Size', 'Price', 'Direction']
+
+            # Adjust the book fields to interleave ask and bid data
+            book_fields = []
+            for i in range(1, 11):
+                book_fields.extend([f"Ask_Price_{i}", f"Ask_Size_{i}", f"Bid_Price_{i}", f"Bid_Size_{i}"])
+
+            header = ['Buffer Release Count', 'Original Timestamp', 'Buffer Release Timestamp',
+                      'Parent Order ID'] + lobster_message_fields + book_fields  # Added 'Parent Order ID'
+
+            writer = csv.writer(csvfile)
+
+            # Write the header only if the file didn't exist
+            if write_header:
+                writer.writerow(header)
+
+            # Write the data for each combined row
+            for row in combined_data:
+                buffer_release_count = row.get('buffer_release_count', 'N/A')
+                original_timestamp = row.get('original_timestamp', 'N/A')
+                buffer_release_timestamp = row.get('buffer_release_timestamp', 'N/A')
+                parent_order_id = row.get('parent_id', '')  # Retrieve parent_order_id
+
+                lobster_message = [row['message'][field] for field in lobster_message_fields]
+
+                # Process the book record to match the header structure
+                book_record = row['book_record']
+                interleaved_book_record = []
+                for i in range(0, len(book_record), 4):
+                    interleaved_book_record.extend(book_record[i:i + 4])
+
+                writer.writerow([buffer_release_count, original_timestamp, buffer_release_timestamp, parent_order_id
+                                 ] + lobster_message + interleaved_book_record)
+    except Exception as e:
+        logger.critical(f"Error writing to CSV: {e}")
+
+
+
+async def append_combined_data_to_csv(combined_data, file_name):
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _append_combined_data_to_csv, combined_data, file_name)
+
+
+def convert_active_orders_to_lobster_format(active_orders, levels_n=10):
+    # Create a DataFrame from the active orders
+    df = pd.DataFrame(active_orders)
+
+    # Separate bids and asks
+    df_bids = df[df['order_type'] == 1]  # Assuming 1 for bids based on the IntEnum
+    df_asks = df[df['order_type'] == -1]  # Assuming -1 for asks based on the IntEnum
+
+    # Sort bids and asks
+    df_bids = df_bids.sort_values(by=['price', 'timestamp'], ascending=[False, True])
+    df_asks = df_asks.sort_values(by=['price', 'timestamp'], ascending=[True, True])
+
+    # Take the top 'levels_n' levels
+    df_bids = df_bids.head(levels_n)
+    df_asks = df_asks.head(levels_n)
+
+    # Create the LOBSTER format DataFrame
+    lobster_columns = []
+    for i in range(1, levels_n + 1):
+        lobster_columns.extend([f'Ask Price {i}', f'Ask Size {i}', f'Bid Price {i}', f'Bid Size {i}'])
+
+    df_lobster = pd.DataFrame(columns=lobster_columns)
+
+    for i in range(levels_n):
+        ask_price = df_asks['price'].iloc[i] if i < len(df_asks) else None
+        ask_size = df_asks['amount'].iloc[i] if i < len(df_asks) else None
+        bid_price = df_bids['price'].iloc[i] if i < len(df_bids) else None
+        bid_size = df_bids['amount'].iloc[i] if i < len(df_bids) else None
+
+        df_lobster.loc[0, f'Ask Price {i + 1}'] = ask_price
+        df_lobster.loc[0, f'Ask Size {i + 1}'] = ask_size
+        df_lobster.loc[0, f'Bid Price {i + 1}'] = bid_price
+        df_lobster.loc[0, f'Bid Size {i + 1}'] = bid_size
+
+    return df_lobster
+
+def _append_order_books_to_csv(order_books, file_name):
+    csv_file_path = os.path.join(DATA_PATH, f"book_{file_name}.csv")
+
+    # Check if the file exists to decide if headers need to be written
+    write_header = not os.path.exists(csv_file_path)
+
+    with open(csv_file_path, 'a', newline='') as csvfile:
+        # Assume all order books have the same format, so use the first one to prepare header
+        first_order_book = order_books[0][0]  # First element is the order book, second is the timestamp
+        header = ["Timestamp"]
+        for i in range(1, (len(first_order_book) // 4) + 1):
+            header.extend([f"Ask_Price_{i}", f"Ask_Size_{i}", f"Bid_Price_{i}", f"Bid_Size_{i}"])
+
+        writer = csv.writer(csvfile)
+
+        # Write the header only if the file didn't exist
+        if write_header:
+            writer.writerow(header)
+
+        # Write the book data with timestamp as a separate column for each record
+        for order_book, timestamp in order_books:
+            writer.writerow([timestamp] + list(order_book))
+def _append_lobster_messages_to_csv(lobster_msgs, file_name):
+    csv_file_path = os.path.join(DATA_PATH, f"messages_{file_name}.csv")
+
+    # Define the header (column names) for the LOBSTER-formatted CSV file
+    fieldnames = ['Trader type', 'Time', 'Event Type', 'Order ID', 'Size', 'Price', 'Direction']
+
+    # Check if the file exists to decide if headers need to be written
+    write_header = not os.path.exists(csv_file_path)
+
+    with open(csv_file_path, 'a', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+        # Write the header only if the file didn't exist
+        if write_header:
+            writer.writeheader()
+
+        # Write the data for each message
+        for lobster_msg in lobster_msgs:
+            writer.writerow(lobster_msg)
+
+async def append_order_books_to_csv(order_books, file_name):
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _append_order_books_to_csv, order_books, file_name)
+
+async def append_lobster_messages_to_csv(lobster_msgs, file_name):
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _append_lobster_messages_to_csv, lobster_msgs, file_name)
+
+
+def create_lobster_message(order_dict, event_type: LobsterEventType, trader_type: int, timestamp: datetime):
+    """Creates a LOBSTER-formatted message dictionary."""
+
+    lobster_message = {
+        'Trader type': trader_type,
+        'Time': timestamp.timestamp(),
+        'Event Type': event_type,
+        'Order ID': order_dict['id'],
+        'Size': order_dict['amount'],
+        'Price': order_dict['price'] * LOBSTER_MONEY_CONSTANT,
+        'Direction': order_dict['order_type']  # Convert the string to its enum value
+    }
+
+    return lobster_message
+
+
+def convert_to_noise_state(active_orders: List[Dict]) -> Dict:
+    noise_state = {
+        'outstanding_orders': {
+            'bid': defaultdict(int),
+            'ask': defaultdict(int)
+        }
+    }
+
+    for order in active_orders:
+        if order['status'] == 'active':
+            order_type_value = order['order_type']
+            order_type = OrderType(order_type_value).name.lower()
+
+            price = order['price']
+            amount = order['amount']
+            noise_state['outstanding_orders'][order_type][price] += amount
+
+    # Convert defaultdicts to regular dicts for easier use later
+    noise_state['outstanding_orders']['bid'] = dict(noise_state['outstanding_orders']['bid'])
+    noise_state['outstanding_orders']['ask'] = dict(noise_state['outstanding_orders']['ask'])
+
+    return noise_state
+
+
+def convert_to_trader_actions(response_dict):
+    actions = []
+
+    for order_type, order_details in response_dict.items():
+        for price, size_list in order_details.items():
+            size = size_list[0]
+            action = {}
+            if size > 0:
+                action['action_type'] = ActionType.POST_NEW_ORDER.value
+                action['order_type'] = order_type
+                action['price'] = price
+                action['amount'] = size
+            elif size < 0:
+                action['action_type'] = ActionType.CANCEL_ORDER.value
+                action['order_type'] = order_type
+                action['price'] = price
+            if action:
+                actions.append(action)
+
+    return actions
+
+
+def generate_file_name(session_uuid, file_type, extension='csv'):
+    """
+    Generate a filename for the given file type and session UUID.
+    """
+    # Format the current date and time to a string
+    date_str = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+    # Generate the filename
+    file_name = f"{file_type}_{session_uuid}_{date_str}.{extension}"
+    # Return the filename prefixed with the "data/" directory
+    return f"{DATA_PATH}/{file_name}"
+
+

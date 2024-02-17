@@ -63,3 +63,53 @@ class TransactionModel(BaseModel):
     ask_order_id: uuid.UUID
     timestamp: datetime
     price: float
+
+
+from dataclasses import dataclass
+
+@dataclass
+class TraderConfig:
+    initial_shares: int
+    initial_cash: int
+    max_short_shares: int
+    max_short_cash: int
+    trading_day_duration: int
+    max_active_orders: int
+    noise_trader_update_freq: int
+    post_every_x_second: float
+
+
+@dataclass
+class RoundConfig:
+    buffer_delay: int
+    max_buffer_releases: int
+    num_traders: int
+    seed: int
+    num_human_traders: int
+    num_noise_traders: int
+
+@dataclass
+class SimulationConfig:
+    trader: TraderConfig
+    round: RoundConfig
+
+params = SimulationConfig(
+    trader=TraderConfig(
+        initial_shares=100,
+        initial_cash=1000,
+        max_short_shares=100,
+        max_short_cash=1000,
+        trading_day_duration=60,
+        max_active_orders=10,
+        noise_trader_update_freq=5,
+        post_every_x_second=0.5
+    ),
+    round=RoundConfig(
+        buffer_delay=0,
+        max_buffer_releases=None,
+        num_traders=6,
+        seed=None,
+        num_human_traders=3,
+        num_noise_traders=1,
+    )
+)

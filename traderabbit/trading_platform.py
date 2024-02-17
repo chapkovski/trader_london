@@ -5,7 +5,7 @@ from datetime import datetime
 from traderabbit.utils import ack_message
 from traderabbit.custom_logger import setup_custom_logger
 from typing import List, Dict
-from structures import OrderStatus, OrderModel, OrderType, TransactionModel, LobsterEventType
+from config import OrderStatus, OrderModel, OrderType, TransactionModel, LobsterEventType
 import asyncio
 from collections import defaultdict
 from traderabbit.utils import (CustomEncoder,
@@ -19,7 +19,9 @@ from asyncio import Lock, Event
 
 logger = setup_custom_logger(__name__)
 
+"""bufferization:
 
+ equalize human and algorithms. """
 class TradingSystem:
     transactions = List[TransactionModel]
     all_orders = Dict[uuid.UUID, Dict]
@@ -124,9 +126,8 @@ class TradingSystem:
 
     @property
     def list_active_orders(self):
-        """ Returns a list of all active orders. When we switch to real DB or mongo, we won't need it anymore."""
         return list(self.active_orders.values())
-
+        
     def get_file_name(self):
         # todo: rename this to get_message_file_name
         """Returns file name for messages which is a trading platform id + datetime of creation with _ as spaces"""
@@ -197,8 +198,10 @@ class TradingSystem:
 
     async def release_buffered_orders(self):
         logger.info(f'total amount of buffered orders: {len(self.buffered_orders)}')
+        """checks if the buffer is full and releases the orders if it is."""
         sleep_task = asyncio.create_task(asyncio.sleep(self.buffer_delay))
         release_event_task = asyncio.create_task(self.release_event.wait())
+        """d"""
 
         await asyncio.wait([sleep_task,
                             release_event_task
@@ -218,7 +221,9 @@ class TradingSystem:
                 order_dict['timestamp'] = self.buffer_release_time
 
                 order_amount = order_dict['amount']
+                """d"""
                 if order_amount > 1:
+                    """d"""
                     for _ in range(order_amount):
                         split_order = order_dict.copy()
                         split_order['parent_id'] = order_dict['id']
@@ -349,7 +354,6 @@ class TradingSystem:
             'price': data.get('price'),
             'order_type': data.get('order_type'),
             'timestamp': datetime.utcnow(),
-            # we add the timestamp here but when we release an order out of the buffer we set a common tiestmap for them that points to the release time.
             'session_id': self.id,
             'trader_id': trader_id
         }

@@ -22,3 +22,7 @@ _secrets/*
 .ipynb_checkpoints/
 data/
 !data/.gitkeep
+
+# Jupyter Notebook
+*.yml
+*.ipynb

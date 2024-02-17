@@ -703,8 +703,6 @@ max_size_level = 5
 
 # some test for me, ignore
 
-
-
 def get_book_message_init(best_bid, size, settings):
     levels_n = settings['levels_n']
     book = np.zeros((4 * levels_n,))
