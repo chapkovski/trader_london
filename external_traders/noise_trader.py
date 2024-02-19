@@ -9,7 +9,7 @@ Created on Wed Aug  2 10:14:44 2023
 import numpy as np
 import numba
 import datetime
-from traderabbit.custom_logger import setup_custom_logger
+from main_platform.custom_logger import setup_custom_logger
 import random
 
 logger = setup_custom_logger(__name__)
