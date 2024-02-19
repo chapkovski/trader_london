@@ -15,14 +15,21 @@ logger = logging.getLogger(__name__)
 class HumanTrader(BaseTrader):
     websocket = None
 
-    def __init__(self, trader_data: TraderCreationData):
+    def __init__(self, trader_data: TraderCreationData, ):
         super().__init__(trader_type=TraderType.HUMAN)
 
+    async def post_processing_server_message(self, json_message):
+        message_type = json_message.pop('type')
+        if message_type:
+            await self.send_message_to_client(message_type, json_message)
 
-    async def send_message_to_client(self, type, **kwargs):
+    def connect_to_socket(self, websocket):
+        self.websocket = websocket
+
+    async def send_message_to_client(self, message_type, **kwargs):
         return await self.websocket.send_json(
             {
-                'type': type,
+                'type': message_type,
                 **kwargs
             }
         )
@@ -38,7 +45,6 @@ class HumanTrader(BaseTrader):
             handler = getattr(self, f'handle_{action_type}', None)
             if handler:
                 await handler(data)
-
             else:
                 print(f"Invalid message format: {message}")
         except json.JSONDecodeError:
@@ -53,10 +59,8 @@ class HumanTrader(BaseTrader):
     async def handle_cancel_order(self, data):
         order_uuid = data.get('id')
         # Check if the order UUID exists in the DataFrame
-        if order_uuid in self.orders_df['uuid'].values:
+        if order_uuid in self.orders.keys():
             await self.send_cancel_order_request(order_uuid)
         else:
             # Handle the case where the order UUID does not exist
             logger.warning(f"Order with UUID {order_uuid} not found.")
-
-

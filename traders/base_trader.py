@@ -12,9 +12,8 @@ logger = setup_custom_logger(__name__)
 
 
 class BaseTrader:
-    orders = []
-    all_orders = []
-    transactions = []
+    orders = {}
+    order_book = {'bids': [], 'asks': []}
 
     def __init__(self, trader_type: TraderType):
         self.trader_type = trader_type.value
@@ -60,7 +59,7 @@ class BaseTrader:
                                                                  auto_delete=True)
         broadcast_queue = await self.channel.declare_queue("", auto_delete=True)
         await broadcast_queue.bind(broadcast_exchange)
-        await broadcast_queue.consume(self.on_message)
+        await broadcast_queue.consume(self.on_message_from_system)
 
         # For individual messages
         self.trading_system_exchange = await self.channel.declare_exchange(self.queue_name,
@@ -71,7 +70,7 @@ class BaseTrader:
             auto_delete=True
         )  # Declare a unique queue for this Trader
         await trader_queue.bind(self.trading_system_exchange, routing_key=self.trader_queue_name)
-        await trader_queue.consume(self.on_message)  # Assuming you have a method named on_message
+        await trader_queue.consume(self.on_message_from_system)
 
         await self.register()  # Register with the trading system
 
@@ -107,13 +106,18 @@ class BaseTrader:
             handler = getattr(self, f'handle_{action_type}', None)
             if handler:
                 await handler(data)
+                await self.post_processing_server_message(json_message)
             else:
                 print(f"Invalid message format: {message}")
         except json.JSONDecodeError:
             print(f"Error decoding message: {message}")
 
 
-
+    async  def post_processing_server_message(self, json_message):
+        """for BaseTrader it is not implemented. For human trader we send updated info back to client.
+        For other market maker types we need do some reactions on updated market if needed.
+        """
+        pass
     async def post_new_order(self,
                              amount, price, order_type: OrderType
                              ):
