@@ -8,6 +8,7 @@ from typing import List, Dict
 from structures import OrderStatus, OrderModel, OrderType, TransactionModel, LobsterEventType
 import asyncio
 import pandas as pd
+from pprint import pprint
 from main_platform.utils import (CustomEncoder,
                                  create_lobster_message,
                                  convert_to_book_format,
@@ -21,7 +22,6 @@ logger = setup_custom_logger(__name__)
 class TradingSession:
     transactions = List[TransactionModel]
     all_orders = Dict[uuid.UUID, Dict]
-
     buffered_orders = Dict[uuid.UUID, Dict]
 
     @property
@@ -34,15 +34,9 @@ class TradingSession:
         order_book = {'bids': [], 'asks': []}
         if active_orders_df.empty:
             return order_book
-        # Filter for active bids and asks
-
 
         active_bids = active_orders_df[(active_orders_df['order_type'] == OrderType.BID.value)]
         active_asks = active_orders_df[(active_orders_df['order_type'] == OrderType.ASK.value)]
-
-
-
-        # Aggregate and format bids if there are any
         if not active_bids.empty:
             bids_grouped = active_bids.groupby('price').amount.sum().reset_index().sort_values(by='price',
                                                                                                  ascending=False)
@@ -52,11 +46,9 @@ class TradingSession:
         if not active_asks.empty:
             asks_grouped = active_asks.groupby('price').amount.sum().reset_index().sort_values(by='price')
             order_book['asks'] = asks_grouped.rename(columns={'price': 'x', 'amount': 'y'}).to_dict('records')
-        print('*'*50)
-        print(order_book)
-        print('*'*50)
+
         return order_book
-    def __init__(self, buffer_delay=5, max_buffer_releases=None):
+    def __init__(self, buffer_delay=0.1, max_buffer_releases=None):
         """
         buffer_delay: The delay in seconds before the Trading System processes the buffered orders.
         """
@@ -117,8 +109,38 @@ class TradingSession:
             # await dump_orders_to_csv(self.all_orders, generate_file_name(self.id, "all_orders"))
         except Exception as e:
             print(f"An error occurred during cleanup: {e}")
-
+    def get_active_orders_to_broadcast(self):
+        # TODO. PHILIPP. It's not optimal but we'll rewrite it anyway when we convert form in-memory to DB
+        active_orders_df = pd.DataFrame(list(self.active_orders.values()))
+        # lets keep only id, trader_id, order_type, amount, price
+        if active_orders_df.empty:
+            return []
+        active_orders_df = active_orders_df[['id', 'trader_id', 'order_type', 'amount', 'price']]
+        # convert to list of dicts
+        res = active_orders_df.to_dict('records')
+        return res
     async def send_broadcast(self, message):
+        # TODO: PHILIPP: let's think how to make this more efficient but for simplicity
+        # TODO we inject the current order book, active orders and transaction history into every broadcasted message
+        # TODO: also important thing: we now send all active orders to everyone. We may think about possiblity to
+        # TODO: send only to the trader who own them. But not now let's keep it simple.
+        transactions = [{'price': t['price'], 'timestamp': t['timestamp'].timestamp()} for t in self.transactions]
+        # sort by timestamp
+        transactions.sort(key=lambda x: x['timestamp'])
+        # if not empty return the last one for current price
+        if transactions:
+            current_price = transactions[-1]['price']
+        else:
+            current_price = None
+        message.update({
+            'type':'update', # TODO: PHILIPP: we need to think about the type of the message. it's hardcoded for now
+            'order_book': self.order_book,
+            'active_orders': self.get_active_orders_to_broadcast(),
+            'transaction_history': self.transactions,
+            'spread': self.get_spread(),
+            'current_price': current_price
+        })
+
         exchange = await self.channel.get_exchange(self.broadcast_exchange_name)
         await exchange.publish(
             aio_pika.Message(body=json.dumps(message, cls=CustomEncoder).encode()),
@@ -126,6 +148,23 @@ class TradingSession:
         )
 
     async def send_message_to_trader(self, trader_id, message):
+        # TODO. PHILIPP. IT largely overlap with broadcast. We need to refactor that moving to _injection method
+        transactions = [{'price': t['price'], 'timestamp': t['timestamp'].timestamp()} for t in self.transactions]
+        # sort by timestamp
+        transactions.sort(key=lambda x: x['timestamp'])
+        # if not empty return the last one for current price
+        if transactions:
+            current_price = transactions[-1]['price']
+        else:
+            current_price = None
+        message.update({
+            'type': 'update',  # TODO: PHILIPP: we need to think about the type of the message. it's hardcoded for now
+            'order_book': self.order_book,
+            'active_orders': self.get_active_orders_to_broadcast(),
+            'transaction_history': self.transactions,
+            'spread': self.get_spread(),
+            'current_price': current_price
+        })
         await self.trader_exchange.publish(
             aio_pika.Message(body=json.dumps(message, cls=CustomEncoder).encode()),
             routing_key=f'trader_{trader_id}'
@@ -143,8 +182,7 @@ class TradingSession:
 
             if self.release_task is None:
                 self.release_task = asyncio.create_task(self.release_buffered_orders())
-            return dict(message="Order added to buffer", order=order,
-                        order_book=self.order_book
+            return dict(message="Order added to buffer"
                         )
 
     @property
@@ -273,10 +311,7 @@ class TradingSession:
             self.release_task = None  # Reset the task so it can be recreated
             self.release_event.clear()  # Reset the event
             # TODO: let's think about the depth of the order book to send; and also do we need all transactions??
-            await self.send_broadcast(message=dict(message="Buffer released",
-                                                   # TODO: this is an ugly fix.... let's think how to deal with all that later
-                                                   orders=self.list_active_orders + list(self.buffered_orders.values())
-                                                   ))
+            await self.send_broadcast(message=dict(message="Buffer released"))
 
             # Increment the buffer release count
 
@@ -290,6 +325,25 @@ class TradingSession:
         if self.max_buffer_releases is not None and self.buffer_release_count >= self.max_buffer_releases:
             return True
         return False
+    def get_spread(self):
+        """ Returns the spread between the lowest ask and the highest bid. """
+        asks = [order for order in self.active_orders.values() if order['order_type'] == OrderType.ASK.value]
+        bids = [order for order in self.active_orders.values() if order['order_type'] == OrderType.BID.value]
+
+        # Sort by price (lowest first for asks), and then by timestamp (oldest first - FIFO)
+        asks.sort(key=lambda x: (x['price'], x['timestamp']))
+        # Sort by price (highest first for bids), and then by timestamp (oldest first)
+        bids.sort(key=lambda x: (-x['price'], x['timestamp']))
+
+        # Calculate the spread
+        if asks and bids:
+            lowest_ask = asks[0]['price']
+            highest_bid = bids[0]['price']
+            spread = lowest_ask - highest_bid
+            return spread
+        else:
+            logger.info("No overlapping orders.")
+            return None
 
     async def clear_orders(self):
         res = {'transactions': [], 'removed_active_orders': []}
@@ -305,6 +359,8 @@ class TradingSession:
         bids.sort(key=lambda x: (-x['price'], x['timestamp']))
 
         # Calculate the spread
+        # TODO. Philipp. We actually already have this method above. We need to refactor it. We need a separate method
+        # because we also return spread to traders in broadcast messages.
         if asks and bids:
             lowest_ask = asks[0]['price']
             highest_bid = bids[0]['price']
@@ -419,19 +475,15 @@ class TradingSession:
 
             # Append the combined row to the CSV
             await append_combined_data_to_csv([combined_row], self.get_file_name())
-
             logger.info(f"Order {order_id} has been canceled for trader {trader_id}.")
-
             # Broadcast the cancellation, implementation may vary based on your system's logic
             await self.broadcast_order_cancellation(trader_id)
-
             return {"status": "cancel success", "order": order_id, "respond": True}
 
     async def broadcast_order_cancellation(self, trader_id):
         # Implementation for broadcasting order cancellation
         # Note: Make sure self.list_active_orders and self.buffered_orders reflect the current state after cancellation
-        await self.send_broadcast(message=dict(message="Order is cancelled",
-                                               orders=self.list_active_orders + list(self.buffered_orders.values())))
+        await self.send_broadcast(message=dict(message="Order is cancelled"))
 
     async def handle_update_book_status(self, order):
         """This one returns the most recent book to the trader who requested it.

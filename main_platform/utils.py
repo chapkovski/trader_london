@@ -41,6 +41,8 @@ class CustomEncoder(JSONEncoder):
             return list(obj)
         if isinstance(obj, dict_values):
             return list(obj)
+        if isinstance(obj, UUID):
+            return str(obj)
         return JSONEncoder.default(self, obj)
 
 

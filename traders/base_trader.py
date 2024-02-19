@@ -7,7 +7,7 @@ from main_platform.utils import ack_message, convert_to_noise_state, convert_to_
 from main_platform.custom_logger import setup_custom_logger
 from external_traders.noise_trader import get_noise_rule, get_signal_noise, settings_noise, settings, \
     get_noise_rule_unif
-
+from pprint import pprint
 logger = setup_custom_logger(__name__)
 
 
@@ -97,10 +97,11 @@ class BaseTrader:
 
         """
         try:
-            logger.critical(f"Trader {self.id} received message: {message.body.decode()}")
+
             json_message = json.loads(message.body.decode())
+
             action_type = json_message.get('type')
-            data = json_message.get('data')
+            data = json_message
             logger.info(data)
             if not data:
                 logger.error('no data from trading system')
@@ -108,12 +109,16 @@ class BaseTrader:
             order_book = data.get('order_book')
             if order_book:
                 self.order_book = order_book
+            orders = data.get('orders')
+            if orders:
+                self.orders = [order for order in orders if order['trader_id'] == self.id]
             handler = getattr(self, f'handle_{action_type}', None)
             if handler:
                 await handler(data)
-                await self.post_processing_server_message(json_message)
             else:
                 logger.error(f"Invalid message format: {message}")
+            await self.post_processing_server_message(data)
+
         except json.JSONDecodeError:
             logger.error(f"Error decoding message: {message}")
 
