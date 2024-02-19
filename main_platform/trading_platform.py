@@ -7,12 +7,10 @@ from main_platform.custom_logger import setup_custom_logger
 from typing import List, Dict
 from structures import OrderStatus, OrderModel, OrderType, TransactionModel, LobsterEventType
 import asyncio
-from collections import defaultdict
+import pandas as pd
 from main_platform.utils import (CustomEncoder,
                                  create_lobster_message,
-                                 append_lobster_messages_to_csv,
                                  convert_to_book_format,
-                                 append_order_books_to_csv,
                                  append_combined_data_to_csv
                                  )
 from asyncio import Lock, Event
@@ -29,7 +27,35 @@ class TradingSession:
     @property
     def active_orders(self):
         return {k: v for k, v in self.all_orders.items() if v['status'] == OrderStatus.ACTIVE}
+    @property
+    def order_book(self):
+        active_orders_df = pd.DataFrame(list(self.active_orders.values()))
+        # Initialize empty order book
+        order_book = {'bids': [], 'asks': []}
+        if active_orders_df.empty:
+            return order_book
+        # Filter for active bids and asks
 
+
+        active_bids = active_orders_df[(active_orders_df['order_type'] == OrderType.BID.value)]
+        active_asks = active_orders_df[(active_orders_df['order_type'] == OrderType.ASK.value)]
+
+
+
+        # Aggregate and format bids if there are any
+        if not active_bids.empty:
+            bids_grouped = active_bids.groupby('price').amount.sum().reset_index().sort_values(by='price',
+                                                                                                 ascending=False)
+            order_book['bids'] = bids_grouped.rename(columns={'price': 'x', 'amount': 'y'}).to_dict('records')
+
+        # Aggregate and format asks if there are any
+        if not active_asks.empty:
+            asks_grouped = active_asks.groupby('price').amount.sum().reset_index().sort_values(by='price')
+            order_book['asks'] = asks_grouped.rename(columns={'price': 'x', 'amount': 'y'}).to_dict('records')
+        print('*'*50)
+        print(order_book)
+        print('*'*50)
+        return order_book
     def __init__(self, buffer_delay=5, max_buffer_releases=None):
         """
         buffer_delay: The delay in seconds before the Trading System processes the buffered orders.
@@ -118,8 +144,7 @@ class TradingSession:
             if self.release_task is None:
                 self.release_task = asyncio.create_task(self.release_buffered_orders())
             return dict(message="Order added to buffer", order=order,
-                        # TODO: this is an ugly fix.... let's think how to deal with all that later
-                        orders=self.list_active_orders + list(self.buffered_orders.values())
+                        order_book=self.order_book
                         )
 
     @property
