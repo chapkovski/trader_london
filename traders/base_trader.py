@@ -2,10 +2,12 @@ import asyncio
 import aio_pika
 import json
 import uuid
-from structures.structures import   OrderType, ActionType, TraderType
+from structures.structures import OrderType, ActionType, TraderType
 from main_platform.utils import ack_message, convert_to_noise_state, convert_to_book_format, convert_to_trader_actions
 from main_platform.custom_logger import setup_custom_logger
-from external_traders.noise_trader import get_noise_rule, get_signal_noise, settings_noise, settings, get_noise_rule_unif
+from external_traders.noise_trader import get_noise_rule, get_signal_noise, settings_noise, settings, \
+    get_noise_rule_unif
+
 logger = setup_custom_logger(__name__)
 
 
@@ -90,56 +92,39 @@ class BaseTrader:
         )
 
     @ack_message
-    async def on_message(self, message):
-        """This method is called whenever a message is received by the Trader"""
+    async def on_message_from_system(self, message):
+        """Process incoming messages from trading system.
+        For BaseTrader it updates order book and inventory if needed.
 
-        resp = json.loads(message.body.decode())
-        # logger.info(f"Trader {self.id} received message: {resp}")
-        #     # TODO: the following two lines are currently some artefacts, they should be removed later.
-        #     # currently we broadcast the updated active orders and transactions to all traders.
-        #     # in the future we should only broadcast the updated order book and let the traders decide
-        #     # because now it is totally deanonymized; it is a bad idea to broadcast all the orders and transactions
+        """
+        try:
+            json_message = json.loads(message.body.decode())
+            action_type = json_message.get('type')
+            data = json_message.get('data')
+            order_book = data.get('order_book')
+            if order_book:
+                self.order_book = order_book
+            handler = getattr(self, f'handle_{action_type}', None)
+            if handler:
+                await handler(data)
+            else:
+                print(f"Invalid message format: {message}")
+        except json.JSONDecodeError:
+            print(f"Error decoding message: {message}")
 
-        if resp.get('orders'):
-            self.all_orders = resp.get('orders')
-            self.orders = self.get_my_orders(self.all_orders)
 
-    async def request_order_book(self):
-        message = {
-            "action": ActionType.UPDATE_BOOK_STATUS.value,
-        }
-
-        await self.send_to_trading_system(message)
 
     async def post_new_order(self,
                              amount, price, order_type: OrderType
                              ):
-        # todo: here we should call a generating function passing there the current book state etc,
-        # and it will return price, amount, order_type
-
-        # TODO: all the following should be removed, it's now only for generating some prices for bids and asks
-
         new_order = {
-
             "action": ActionType.POST_NEW_ORDER.value,
             "amount": amount,
             "price": price,
             "order_type": order_type.value,
         }
-
-        resp = await self.send_to_trading_system(new_order)
-
+        await self.send_to_trading_system(new_order)
         logger.debug(f"Trader {self.id} posted new {order_type} order: {new_order}")
-
-    def get_my_transactions(self, transactions):
-        """filter full transactions to get only mine"""
-        return [transaction for transaction in transactions if transaction['trader_id'] == self.id]
-
-    def get_my_orders(self, orders):
-        """filter full orders to get only mine.
-        TODO: we won't need it if/when TS will send only my orders to me"""
-
-        return [order for order in orders if order['trader_id'] == self.id]
 
     async def send_cancel_order_request(self, order_id: uuid.UUID):
         cancel_order_request = {
@@ -148,57 +133,5 @@ class BaseTrader:
             "order_id": order_id
         }
 
-        response = await self.send_to_trading_system(cancel_order_request)
-        # TODO: deal with response if needed (what if order is already cancelled? what is a part of transaction?
-        #  what if order is not found? what if order is not yours?)
-        logger.warning(f"Trader {self.id} sent cancel order request: {cancel_order_request}")
-
-    async def find_and_cancel_order(self, price):
-        """finds the order with the given price and cancels it"""
-        for order in self.orders:
-            if order['price'] == price:
-                await self.send_cancel_order_request(order['id'])
-                self.orders.remove(order)
-                return
-
-        logger.warning(f"Trader {self.id} tried to cancel order with price {price} but it was not found")
-        logger.warning(f'Available prices are: {[order.get("price") for order in self.orders]}')
-
-    async def run(self):
-        try:
-            while True:
-                orders_to_do = self.generate_noise_orders()
-                for order in orders_to_do:
-                    if order['action_type'] == ActionType.POST_NEW_ORDER.value:
-                        order_type_str = order['order_type']
-                        order_type_value = OrderType[order_type_str.upper()]
-                        await self.post_new_order(order['amount'], order['price'], order_type_value)
-                    elif order['action_type'] == ActionType.CANCEL_ORDER.value:
-                        await self.find_and_cancel_order(order['price'])
-
-                await asyncio.sleep(0.5)  # LEt's post them every second. TODO: REMOVE THIS
-        except Exception as e:
-            # Handle the exception here
-            logger.error(f"Exception in trader run: {e}")
-            # Optionally re-raise the exception if you want it to be propagated
-            raise
-
-    def generate_noise_orders(self):
-        # Convert the active orders to the book format understood by get_noise_rule
-
-        book_format = convert_to_book_format(self.all_orders)
-        # logger.critical(f"Book format: {list(book_format)}")
-        #
-        # # Convert the trader's state to the noise_state format
-        noise_state = convert_to_noise_state(self.orders)  # Assuming you have this method
-        #
-        # # Get the noise signal
-        signal_noise = get_signal_noise(signal_state=None, settings_noise=settings_noise)
-        #
-        # # Generate noise orders
-        # noise_orders = get_noise_rule(book_format, signal_noise, noise_state, settings_noise, settings)
-        # noise_orders = get_noise_rule(book_format, signal_noise, noise_state, settings_noise, settings)
-        noise_orders = get_noise_rule_unif(book_format, signal_noise, noise_state, settings_noise, settings)
-        converted_noise_orders = convert_to_trader_actions(noise_orders)
-
-        return converted_noise_orders
+        await self.send_to_trading_system(cancel_order_request)
+        logger.info(f"Trader {self.id} sent cancel order request: {cancel_order_request}")
