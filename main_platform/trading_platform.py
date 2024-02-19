@@ -20,7 +20,7 @@ from asyncio import Lock, Event
 logger = setup_custom_logger(__name__)
 
 
-class TradingSystem:
+class TradingSession:
     transactions = List[TransactionModel]
     all_orders = Dict[uuid.UUID, Dict]
 
@@ -34,12 +34,12 @@ class TradingSystem:
         """
         buffer_delay: The delay in seconds before the Trading System processes the buffered orders.
         """
-        # self.id = uuid.uuid4()
+        self.id = str(uuid.uuid4())
         self.max_buffer_releases = max_buffer_releases
         logger.critical(f"Max buffer releases: {self.max_buffer_releases}")
         self.buffer_release_count = 0
         self.buffer_release_time = None
-        self.id = "1234"  # for testing purposes
+
         self.creation_time = datetime.utcnow()
         self.all_orders = {}
         self.buffered_orders = {}

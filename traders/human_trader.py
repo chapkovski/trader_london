@@ -1,4 +1,4 @@
-from base_trader import BaseTrader
+from .base_trader import BaseTrader
 
 import uuid
 import asyncio
@@ -6,7 +6,7 @@ import random
 import time
 import json
 import pandas as pd
-from structures import TraderCreationData, TraderType
+from structures import TraderType
 import logging
 
 logger = logging.getLogger(__name__)
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class HumanTrader(BaseTrader):
     websocket = None
 
-    def __init__(self, trader_data: TraderCreationData, ):
+    def __init__(self):
         super().__init__(trader_type=TraderType.HUMAN)
 
     async def post_processing_server_message(self, json_message):

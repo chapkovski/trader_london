@@ -12,13 +12,13 @@ logger = setup_custom_logger(__name__)
 
 
 class BaseTrader:
-    orders = {}
-    order_book = {'bids': [], 'asks': []}
+    orders:dict = None
+    order_book: dict = None
 
     def __init__(self, trader_type: TraderType):
         self.trader_type = trader_type.value
         self.id = str(uuid.uuid4())
-        logger.info(f"Trader created with UUID: {self.id}")
+        logger.info(f"Trader of type {self.trader_type} created with UUID: {self.id}")
         self.connection = None
         self.channel = None
         self.trading_session_uuid = None
@@ -44,7 +44,7 @@ class BaseTrader:
                 logger.info(f"Trader {self.id} connection closed")
 
         except Exception as e:
-            print(f"An error occurred during Trader cleanup: {e}")
+            logger.error(f"An error occurred during Trader cleanup: {e}")
 
     async def connect_to_session(self, trading_session_uuid):
         self.trading_session_uuid = trading_session_uuid
@@ -97,9 +97,14 @@ class BaseTrader:
 
         """
         try:
+            logger.critical(f"Trader {self.id} received message: {message.body.decode()}")
             json_message = json.loads(message.body.decode())
             action_type = json_message.get('type')
             data = json_message.get('data')
+            logger.info(data)
+            if not data:
+                logger.error('no data from trading system')
+                return
             order_book = data.get('order_book')
             if order_book:
                 self.order_book = order_book
@@ -108,9 +113,9 @@ class BaseTrader:
                 await handler(data)
                 await self.post_processing_server_message(json_message)
             else:
-                print(f"Invalid message format: {message}")
+                logger.error(f"Invalid message format: {message}")
         except json.JSONDecodeError:
-            print(f"Error decoding message: {message}")
+            logger.error(f"Error decoding message: {message}")
 
 
     async  def post_processing_server_message(self, json_message):
@@ -139,3 +144,7 @@ class BaseTrader:
 
         await self.send_to_trading_system(cancel_order_request)
         logger.info(f"Trader {self.id} sent cancel order request: {cancel_order_request}")
+    async def run(self):
+        # Placeholder method for compatibility with the trading system
+        logger.info(f"trader {self.id} is waiting")
+        pass

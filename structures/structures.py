@@ -15,7 +15,7 @@ class TraderCreationData(BaseModel):
     step: int = Field(default=100, description="Step for new orders")
     extra_info_treatment: bool = Field(default=False, description="Extra info treatment")
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "max_short_shares": 100,
                 "max_short_cash": 10000.0,
@@ -62,11 +62,12 @@ class OrderStatus(str, Enum):
     CANCELLED = 'cancelled'
 
 
-class TraderType(int, Enum):
-    NOISE = 0
-    MARKET_MAKER = 1
-    INFORMED = 2
-    HUMAN = 3
+class TraderType(str, Enum):
+    NOISE = 'NOISE'
+    MARKET_MAKER = 'MARKET_MAKER'
+    INFORMED = 'INFORMED'
+    HUMAN = 'HUMAN'
+    # Philipp: expand this list to include new trader types if needed
 
 
 class OrderModel(BaseModel):
@@ -88,3 +89,8 @@ class TransactionModel(BaseModel):
     ask_order_id: uuid.UUID
     timestamp: datetime
     price: float
+
+class TraderManagerParams(BaseModel):
+    n_noise_traders: int = 3  # Default value if not provided
+    n_human_traders: int = 1  # Default value if not provided
+    activity_frequency: int = 5  # Default value if not provided
