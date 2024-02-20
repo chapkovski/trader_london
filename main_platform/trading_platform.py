@@ -48,10 +48,11 @@ class TradingSession:
             order_book['asks'] = asks_grouped.rename(columns={'price': 'x', 'amount': 'y'}).to_dict('records')
 
         return order_book
-    def __init__(self, buffer_delay=0.1, max_buffer_releases=None):
+    def __init__(self, buffer_delay=0, max_buffer_releases=None):
         """
         buffer_delay: The delay in seconds before the Trading System processes the buffered orders.
         """
+        print(f'Buffer delay: {buffer_delay}')
         self.id = str(uuid.uuid4())
         self.max_buffer_releases = max_buffer_releases
         logger.critical(f"Max buffer releases: {self.max_buffer_releases}")
@@ -115,7 +116,10 @@ class TradingSession:
         # lets keep only id, trader_id, order_type, amount, price
         if active_orders_df.empty:
             return []
-        active_orders_df = active_orders_df[['id', 'trader_id', 'order_type', 'amount', 'price']]
+        active_orders_df = active_orders_df[['id', 'trader_id', 'order_type', 'amount', 'price', 'timestamp']]
+        # TODO: PHILIPP:  I dont like that we don't use structure order type but hardcode it here.
+        active_orders_df['order_type'] = active_orders_df['order_type'].map({-1: 'ask', 1: 'bid'})
+
         # convert to list of dicts
         res = active_orders_df.to_dict('records')
         return res
@@ -136,7 +140,7 @@ class TradingSession:
             'type':'update', # TODO: PHILIPP: we need to think about the type of the message. it's hardcoded for now
             'order_book': self.order_book,
             'active_orders': self.get_active_orders_to_broadcast(),
-            'transaction_history': self.transactions,
+            'history': self.transactions,
             'spread': self.get_spread(),
             'current_price': current_price
         })
@@ -274,6 +278,7 @@ class TradingSession:
             logger.info(f"Buffer release time: {self.buffer_release_time.timestamp()}")
             combined_data = []
             for trader_id, order_dict in self.buffered_orders.items():
+                logger.critical(f"Releasing order: {order_dict}")
                 # lets create a temp list where we'll put ids of single orders OR splitted orders if amount>1
                 temp_order_ids = []
                 # Set the timestamp for the order

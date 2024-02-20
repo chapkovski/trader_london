@@ -16,9 +16,6 @@ class HumanTrader(BaseTrader):
         super().__init__(trader_type=TraderType.HUMAN)
 
     async def post_processing_server_message(self, json_message):
-        print('BBBB'*100)
-        pprint(json_message)
-        print('BBBB'*100)
         message_type = json_message.pop('type')
         if message_type:
             await self.send_message_to_client(message_type, **json_message)
@@ -31,9 +28,6 @@ class HumanTrader(BaseTrader):
         trader_orders = self.orders or []
 
         kwargs['trader_orders'] = trader_orders
-        print('$'*100)
-        pprint(kwargs)
-        print('$' * 100)
         return await self.websocket.send_json(
             {
                 'type': message_type,
@@ -48,8 +42,7 @@ class HumanTrader(BaseTrader):
         """
         try:
             json_message = json.loads(message)
-            print(json_message)
-            print('AAAA'*100)
+
             action_type = json_message.get('type')
             data = json_message.get('data')
             handler = getattr(self, f'handle_{action_type}', None)
@@ -69,7 +62,7 @@ class HumanTrader(BaseTrader):
             order_type = OrderType.ASK
 
         price = data.get('price')
-        amount = data.get('amount')
+        amount = data.get('amount', 1) # TODO. Philipp. This is a placeholder. We need to get the amount from the client.
         await self.post_new_order(amount, price, order_type)
 
     async def handle_cancel_order(self, data):

@@ -102,16 +102,18 @@ class BaseTrader:
 
             action_type = json_message.get('type')
             data = json_message
-            logger.info(data)
+
             if not data:
                 logger.error('no data from trading system')
                 return
             order_book = data.get('order_book')
             if order_book:
                 self.order_book = order_book
-            orders = data.get('orders')
-            if orders:
-                self.orders = [order for order in orders if order['trader_id'] == self.id]
+            active_orders = data.get('active_orders')
+            if active_orders:
+                self.orders = [order for order in active_orders if order['trader_id'] == self.id]
+                pprint(self.orders)
+                print('*'*50)
             handler = getattr(self, f'handle_{action_type}', None)
             if handler:
                 await handler(data)
