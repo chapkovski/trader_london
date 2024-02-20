@@ -11,7 +11,8 @@ logger = logging.getLogger(__name__)
 
 class HumanTrader(BaseTrader):
     websocket = None
-    inventory = {'shares': 0, 'cash': 1000} # TODO.PHILIPP. WRite something sensible here. placeholder for now.
+    inventory = {'shares': 0, 'cash': 1000}  # TODO.PHILIPP. WRite something sensible here. placeholder for now.
+
     def __init__(self):
         super().__init__(trader_type=TraderType.HUMAN)
 
@@ -45,6 +46,8 @@ class HumanTrader(BaseTrader):
 
             action_type = json_message.get('type')
             data = json_message.get('data')
+            logger.critical(f"Message from client: {json_message}")
+
             handler = getattr(self, f'handle_{action_type}', None)
             if handler:
                 await handler(data)
@@ -54,7 +57,7 @@ class HumanTrader(BaseTrader):
             print(f"Error decoding message: {message}")
 
     async def handle_add_order(self, data):
-        order_type = data.get('type') # TODO: Philipp. This is a string. We need to convert it to an enum.
+        order_type = data.get('type')  # TODO: Philipp. This is a string. We need to convert it to an enum.
         # TODO. Philipp. We may rewrite a client so it will send us an enum instead of a string.
         if order_type == 'bid':
             order_type = OrderType.BID
@@ -62,13 +65,15 @@ class HumanTrader(BaseTrader):
             order_type = OrderType.ASK
 
         price = data.get('price')
-        amount = data.get('amount', 1) # TODO. Philipp. This is a placeholder. We need to get the amount from the client.
+        amount = data.get('amount',
+                          1)  # TODO. Philipp. This is a placeholder. We need to get the amount from the client.
         await self.post_new_order(amount, price, order_type)
 
     async def handle_cancel_order(self, data):
         order_uuid = data.get('id')
-        # Check if the order UUID exists in the DataFrame
-        if order_uuid in self.orders.keys():
+        logger.critical(f"Cancel order request received: {data}")
+
+        if order_uuid in [order['id'] for order in self.orders]:
             await self.send_cancel_order_request(order_uuid)
         else:
             # Handle the case where the order UUID does not exist

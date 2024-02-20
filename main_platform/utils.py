@@ -25,6 +25,16 @@ dict_keys = type({}.keys())
 dict_values = type({}.values())
 DATA_PATH = 'data'
 LOBSTER_MONEY_CONSTANT = 1
+from datetime import timezone, datetime
+
+
+def now():
+    """
+    Get the current time in UTC. the datetime.utcnow is a wrong one, because it is not parsed correctly by JS.
+    We'll keep it here as a universal function to get the current time, if we later on need to change it to a different
+    timezone, we can just do it here.
+    """
+    return datetime.now(timezone.utc)
 
 
 class CustomEncoder(JSONEncoder):
@@ -44,10 +54,6 @@ class CustomEncoder(JSONEncoder):
         if isinstance(obj, UUID):
             return str(obj)
         return JSONEncoder.default(self, obj)
-
-
-
-
 
 
 def ack_message(func):
@@ -122,11 +128,6 @@ def expand_dataframe(df, max_depth=10, step=1, reverse=False, default_price=0):
     return df_expanded
 
 
-class OrderType(IntEnum):
-    ASK = -1  # sell
-    BID = 1  # buy
-
-
 def convert_to_book_format(active_orders, levels_n=10, default_price=2000):
     # Create a DataFrame from the list of active orders
 
@@ -171,7 +172,7 @@ def _append_combined_data_to_csv(combined_data, file_name):
         write_header = not os.path.exists(csv_file_path)
 
         with open(csv_file_path, 'a', newline='') as csvfile:
-            lobster_message_fields = ['Trader type',  'Event Type', 'Order ID', 'Size', 'Price', 'Direction']
+            lobster_message_fields = ['Trader type', 'Event Type', 'Order ID', 'Size', 'Price', 'Direction']
 
             # Adjust the book fields to interleave ask and bid data
             book_fields = []
@@ -206,7 +207,6 @@ def _append_combined_data_to_csv(combined_data, file_name):
                                  ] + lobster_message + interleaved_book_record)
     except Exception as e:
         logger.critical(f"Error writing to CSV: {e}")
-
 
 
 async def append_combined_data_to_csv(combined_data, file_name):
@@ -250,6 +250,7 @@ def convert_active_orders_to_lobster_format(active_orders, levels_n=10):
 
     return df_lobster
 
+
 def _append_order_books_to_csv(order_books, file_name):
     csv_file_path = os.path.join(DATA_PATH, f"book_{file_name}.csv")
 
@@ -272,6 +273,8 @@ def _append_order_books_to_csv(order_books, file_name):
         # Write the book data with timestamp as a separate column for each record
         for order_book, timestamp in order_books:
             writer.writerow([timestamp] + list(order_book))
+
+
 def _append_lobster_messages_to_csv(lobster_msgs, file_name):
     csv_file_path = os.path.join(DATA_PATH, f"messages_{file_name}.csv")
 
@@ -292,9 +295,11 @@ def _append_lobster_messages_to_csv(lobster_msgs, file_name):
         for lobster_msg in lobster_msgs:
             writer.writerow(lobster_msg)
 
+
 async def append_order_books_to_csv(order_books, file_name):
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, _append_order_books_to_csv, order_books, file_name)
+
 
 async def append_lobster_messages_to_csv(lobster_msgs, file_name):
     loop = asyncio.get_event_loop()

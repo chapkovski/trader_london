@@ -12,7 +12,7 @@ logger = setup_custom_logger(__name__)
 
 
 class BaseTrader:
-    orders:dict = None
+    orders:list = None
     order_book: dict = None
 
     def __init__(self, trader_type: TraderType):
@@ -111,9 +111,10 @@ class BaseTrader:
                 self.order_book = order_book
             active_orders = data.get('active_orders')
             if active_orders:
-                self.orders = [order for order in active_orders if order['trader_id'] == self.id]
-                pprint(self.orders)
-                print('*'*50)
+                own_orders = [order for order in active_orders if order['trader_id'] == self.id]
+                # lets convert the order list to a dictionary with keys as order ids
+                self.orders =own_orders
+
             handler = getattr(self, f'handle_{action_type}', None)
             if handler:
                 await handler(data)
@@ -143,6 +144,16 @@ class BaseTrader:
         logger.debug(f"Trader {self.id} posted new {order_type} order: {new_order}")
 
     async def send_cancel_order_request(self, order_id: uuid.UUID):
+        if not order_id:
+            logger.error(f"Order ID is not provided")
+            return
+        if not self.orders:
+            logger.error(f"Trader {self.id} has no active orders")
+            return
+        if order_id not in [order['id'] for order in self.orders]:
+            logger.error(f"Trader {self.id} has no order with ID {order_id}")
+            return
+
         cancel_order_request = {
             "action": ActionType.CANCEL_ORDER.value,  # Assuming you have an ActionType Enum
             "trader_id": self.id,

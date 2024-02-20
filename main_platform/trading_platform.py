@@ -1,7 +1,7 @@
 import aio_pika
 import json
 import uuid
-from datetime import datetime
+
 from main_platform.utils import ack_message
 from main_platform.custom_logger import setup_custom_logger
 from typing import List, Dict
@@ -12,7 +12,8 @@ from pprint import pprint
 from main_platform.utils import (CustomEncoder,
                                  create_lobster_message,
                                  convert_to_book_format,
-                                 append_combined_data_to_csv
+                                 append_combined_data_to_csv,
+                                 now,
                                  )
 from asyncio import Lock, Event
 
@@ -27,6 +28,7 @@ class TradingSession:
     @property
     def active_orders(self):
         return {k: v for k, v in self.all_orders.items() if v['status'] == OrderStatus.ACTIVE}
+
     @property
     def order_book(self):
         active_orders_df = pd.DataFrame(list(self.active_orders.values()))
@@ -39,7 +41,7 @@ class TradingSession:
         active_asks = active_orders_df[(active_orders_df['order_type'] == OrderType.ASK.value)]
         if not active_bids.empty:
             bids_grouped = active_bids.groupby('price').amount.sum().reset_index().sort_values(by='price',
-                                                                                                 ascending=False)
+                                                                                               ascending=False)
             order_book['bids'] = bids_grouped.rename(columns={'price': 'x', 'amount': 'y'}).to_dict('records')
 
         # Aggregate and format asks if there are any
@@ -48,6 +50,7 @@ class TradingSession:
             order_book['asks'] = asks_grouped.rename(columns={'price': 'x', 'amount': 'y'}).to_dict('records')
 
         return order_book
+
     def __init__(self, buffer_delay=0, max_buffer_releases=None):
         """
         buffer_delay: The delay in seconds before the Trading System processes the buffered orders.
@@ -59,7 +62,7 @@ class TradingSession:
         self.buffer_release_count = 0
         self.buffer_release_time = None
 
-        self.creation_time = datetime.utcnow()
+        self.creation_time = now()
         self.all_orders = {}
         self.buffered_orders = {}
         self.transactions = []
@@ -110,6 +113,7 @@ class TradingSession:
             # await dump_orders_to_csv(self.all_orders, generate_file_name(self.id, "all_orders"))
         except Exception as e:
             print(f"An error occurred during cleanup: {e}")
+
     def get_active_orders_to_broadcast(self):
         # TODO. PHILIPP. It's not optimal but we'll rewrite it anyway when we convert form in-memory to DB
         active_orders_df = pd.DataFrame(list(self.active_orders.values()))
@@ -123,6 +127,7 @@ class TradingSession:
         # convert to list of dicts
         res = active_orders_df.to_dict('records')
         return res
+
     async def send_broadcast(self, message):
         # TODO: PHILIPP: let's think how to make this more efficient but for simplicity
         # TODO we inject the current order book, active orders and transaction history into every broadcasted message
@@ -137,7 +142,7 @@ class TradingSession:
         else:
             current_price = None
         message.update({
-            'type':'update', # TODO: PHILIPP: we need to think about the type of the message. it's hardcoded for now
+            'type': 'update',  # TODO: PHILIPP: we need to think about the type of the message. it's hardcoded for now
             'order_book': self.order_book,
             'active_orders': self.get_active_orders_to_broadcast(),
             'history': self.transactions,
@@ -217,8 +222,8 @@ class TradingSession:
         # Generate lobster message
 
         lobster_message = create_lobster_message(order, event_type=event_type,
-                                         trader_type=self.connected_traders[order['trader_id']]['trader_type'],
-                                         timestamp=order['timestamp'])
+                                                 trader_type=self.connected_traders[order['trader_id']]['trader_type'],
+                                                 timestamp=order['timestamp'])
 
         # Generate book record using convert_to_book_format directly
         book_record = convert_to_book_format(self.active_orders.values())
@@ -227,7 +232,7 @@ class TradingSession:
             'message': lobster_message,
             'book_record': book_record,
             'original_timestamp': order['original_timestamp'].timestamp(),  # Include original timestamp
-            'buffer_release_timestamp': order['timestamp'].timestamp() , # Include buffer release timestamp
+            'buffer_release_timestamp': order['timestamp'].timestamp(),  # Include buffer release timestamp
             'buffer_release_count': self.buffer_release_count,
         }
         # Add parent_id to combined_row if it exists in the order
@@ -274,7 +279,7 @@ class TradingSession:
         async with self.lock:
             logger.info(f'we start releasing orders. total amount to release: {len(self.buffered_orders)}')
 
-            self.buffer_release_time = datetime.utcnow()
+            self.buffer_release_time = now()
             logger.info(f"Buffer release time: {self.buffer_release_time.timestamp()}")
             combined_data = []
             for trader_id, order_dict in self.buffered_orders.items():
@@ -304,7 +309,6 @@ class TradingSession:
                     await self.place_order(order_dict, trader_id)
                     combined_data = await self.handle_transaction_for_order(order_dict['id'], combined_data)
 
-
             logger.info(f"Total of {len(self.buffered_orders)} orders released from buffer")
             # Clear orders and get transactions and ids of removed orders
             if combined_data:
@@ -330,6 +334,7 @@ class TradingSession:
         if self.max_buffer_releases is not None and self.buffer_release_count >= self.max_buffer_releases:
             return True
         return False
+
     def get_spread(self):
         """ Returns the spread between the lowest ask and the highest bid. """
         asks = [order for order in self.active_orders.values() if order['order_type'] == OrderType.ASK.value]
@@ -398,7 +403,7 @@ class TradingSession:
             # Change the status to 'EXECUTED' in the all_orders dictionary
             self.all_orders[ask['id']]['status'] = OrderStatus.EXECUTED.value
             self.all_orders[bid['id']]['status'] = OrderStatus.EXECUTED.value
-            timestamp = datetime.utcnow()
+            timestamp = now()
 
             # Create a transaction
             transaction_price = (ask['price'] + bid['price']) / 2  # Mid-price
@@ -434,7 +439,7 @@ class TradingSession:
             'amount': data.get('amount'),
             'price': data.get('price'),
             'order_type': data.get('order_type'),
-            'timestamp': datetime.utcnow(),
+            'timestamp': now(),
             # we add the timestamp here but when we release an order out of the buffer we set a common tiestmap for them that points to the release time.
             'session_id': self.id,
             'trader_id': trader_id
@@ -472,11 +477,11 @@ class TradingSession:
                 return {"status": "failed", "reason": "Order is not active"}
 
             # Cancel the order
-            timestamp = datetime.utcnow()
+            timestamp = now()
             self.all_orders[order_id]['status'] = OrderStatus.CANCELLED.value
 
             # Create a combined row for the cancel event
-            combined_row = self.register_message(existing_order,  LobsterEventType.CANCELLATION_TOTAL)
+            combined_row = self.register_message(existing_order, LobsterEventType.CANCELLATION_TOTAL)
 
             # Append the combined row to the CSV
             await append_combined_data_to_csv([combined_row], self.get_file_name())
