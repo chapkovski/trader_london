@@ -29,13 +29,14 @@ class HumanTrader(BaseTrader):
         trader_orders = self.orders or []
 
         kwargs['trader_orders'] = trader_orders
-        return await self.websocket.send_json(
-            {
-                'type': message_type,
-                'inventory': self.inventory,
-                **kwargs
-            }
-        )
+        if self.websocket:
+            return await self.websocket.send_json(
+                {
+                    'type': message_type,
+                    'inventory': self.inventory,
+                    **kwargs
+                }
+            )
 
     async def on_message_from_client(self, message):
         """
@@ -46,8 +47,6 @@ class HumanTrader(BaseTrader):
 
             action_type = json_message.get('type')
             data = json_message.get('data')
-            logger.critical(f"Message from client: {json_message}")
-
             handler = getattr(self, f'handle_{action_type}', None)
             if handler:
                 await handler(data)

@@ -25,6 +25,32 @@ class TradingSession:
     all_orders = Dict[uuid.UUID, Dict]
     buffered_orders = Dict[uuid.UUID, Dict]
 
+    def __init__(self, buffer_delay=0, max_buffer_releases=None):
+        """
+        buffer_delay: The delay in seconds before the Trading System processes the buffered orders.
+        """
+        self._stop_requested = asyncio.Event()
+        self.id = str(uuid.uuid4())
+        self.max_buffer_releases = max_buffer_releases
+        logger.critical(f"Max buffer releases: {self.max_buffer_releases}")
+        self.buffer_release_count = 0
+        self.buffer_release_time = None
+
+        self.creation_time = now()
+        self.all_orders = {}
+        self.buffered_orders = {}
+        self.transactions = []
+        self.broadcast_exchange_name = f'broadcast_{self.id}'
+        self.queue_name = f'trading_system_queue_{self.id}'
+        self.trader_exchange = None
+        logger.info(f"Trading System created with UUID: {self.id}. Buffer delay is: {buffer_delay} seconds")
+        self.connected_traders = {}
+        self.buffer_delay = buffer_delay
+
+        self.release_task = None
+        self.lock = Lock()
+        self.release_event = Event()
+
     @property
     def active_orders(self):
         return {k: v for k, v in self.all_orders.items() if v['status'] == OrderStatus.ACTIVE}
@@ -51,32 +77,6 @@ class TradingSession:
 
         return order_book
 
-    def __init__(self, buffer_delay=0, max_buffer_releases=None):
-        """
-        buffer_delay: The delay in seconds before the Trading System processes the buffered orders.
-        """
-        print(f'Buffer delay: {buffer_delay}')
-        self.id = str(uuid.uuid4())
-        self.max_buffer_releases = max_buffer_releases
-        logger.critical(f"Max buffer releases: {self.max_buffer_releases}")
-        self.buffer_release_count = 0
-        self.buffer_release_time = None
-
-        self.creation_time = now()
-        self.all_orders = {}
-        self.buffered_orders = {}
-        self.transactions = []
-        self.broadcast_exchange_name = f'broadcast_{self.id}'
-        self.queue_name = f'trading_system_queue_{self.id}'
-        self.trader_exchange = None
-        logger.info(f"Trading System created with UUID: {self.id}. Buffer delay is: {buffer_delay} seconds")
-        self.connected_traders = {}
-        self.buffer_delay = buffer_delay
-
-        self.release_task = None
-        self.lock = Lock()
-        self.release_event = Event()
-
     async def initialize(self):
         self.connection = await aio_pika.connect_robust("amqp://localhost")
         self.channel = await self.connection.channel()
@@ -97,6 +97,8 @@ class TradingSession:
         At this stage we also dump existing transactions and orders from the memory. In the future, we'll probably
         dump them to a database.
         """
+        # Signal the run loop to stop
+        self._stop_requested.set()
         try:
             # Unbind the queue from the exchange (optional, as auto_delete should handle this)
             trader_queue = await self.channel.get_queue(self.queue_name)
@@ -191,6 +193,7 @@ class TradingSession:
 
             if self.release_task is None:
                 self.release_task = asyncio.create_task(self.release_buffered_orders())
+
             return dict(message="Order added to buffer"
                         )
 
@@ -210,35 +213,13 @@ class TradingSession:
         handle_add_order method.
         """
         order_id = order_dict['id']
-        timestamp = order_dict['timestamp']
         order_dict.update({
             'status': OrderStatus.ACTIVE.value,
         })
         self.all_orders[order_id] = order_dict
-
         return order_dict
 
-    def register_message(self, order, event_type):
-        # Generate lobster message
 
-        lobster_message = create_lobster_message(order, event_type=event_type,
-                                                 trader_type=self.connected_traders[order['trader_id']]['trader_type'],
-                                                 timestamp=order['timestamp'])
-
-        # Generate book record using convert_to_book_format directly
-        book_record = convert_to_book_format(self.active_orders.values())
-
-        combined_row = {
-            'message': lobster_message,
-            'book_record': book_record,
-            'original_timestamp': order['original_timestamp'].timestamp(),  # Include original timestamp
-            'buffer_release_timestamp': order['timestamp'].timestamp(),  # Include buffer release timestamp
-            'buffer_release_count': self.buffer_release_count,
-        }
-        # Add parent_id to combined_row if it exists in the order
-        if 'parent_id' in order:
-            combined_row['parent_id'] = order['parent_id']
-        return combined_row
 
     async def handle_transaction_for_order(self, order_id, combined_data):
         clear_result = await self.clear_orders()  # Attempt to clear orders and process transactions
@@ -257,13 +238,8 @@ class TradingSession:
             most_recent_order = ask_order if ask_order['timestamp'] > bid_order['timestamp'] else bid_order
 
             # Create and append the transaction message
-            combined_row = self.register_message(most_recent_order, LobsterEventType.EXECUTION_VISIBLE)
-            combined_data.append(combined_row)
 
-        # If no transaction was made, register the order
-        if str(order_id) not in removed_order_ids:
-            combined_row = self.register_message(self.all_orders[order_id], LobsterEventType.NEW_LIMIT_ORDER)
-            combined_data.append(combined_row)
+
 
         return combined_data  # Return the updated combined_data
 
@@ -271,10 +247,11 @@ class TradingSession:
         logger.info(f'total amount of buffered orders: {len(self.buffered_orders)}')
         sleep_task = asyncio.create_task(asyncio.sleep(self.buffer_delay))
         release_event_task = asyncio.create_task(self.release_event.wait())
-
-        await asyncio.wait([sleep_task,
-                            release_event_task
-                            ], return_when=asyncio.FIRST_COMPLETED)
+        # let's NOT wait if  buffer dealy is 0
+        if self.buffer_delay != 0:
+            await asyncio.wait([sleep_task,
+                                release_event_task
+                                ], return_when=asyncio.FIRST_COMPLETED)
 
         async with self.lock:
             logger.info(f'we start releasing orders. total amount to release: {len(self.buffered_orders)}')
@@ -283,7 +260,7 @@ class TradingSession:
             logger.info(f"Buffer release time: {self.buffer_release_time.timestamp()}")
             combined_data = []
             for trader_id, order_dict in self.buffered_orders.items():
-                logger.critical(f"Releasing order: {order_dict}")
+                logger.info(f"Releasing order: {order_dict}")
                 # lets create a temp list where we'll put ids of single orders OR splitted orders if amount>1
                 temp_order_ids = []
                 # Set the timestamp for the order
@@ -311,8 +288,8 @@ class TradingSession:
 
             logger.info(f"Total of {len(self.buffered_orders)} orders released from buffer")
             # Clear orders and get transactions and ids of removed orders
-            if combined_data:
-                await append_combined_data_to_csv(combined_data, self.get_file_name())
+            # if combined_data:
+            #     await append_combined_data_to_csv(combined_data, self.get_file_name())
 
             # Clear the buffered orders
             self.buffered_orders.clear()
@@ -446,7 +423,7 @@ class TradingSession:
         }
         resp = await self.add_order_to_buffer(clean_order)
         if resp:
-            logger.info(f'Total active orders: {len(self.active_orders)}')
+            logger.critical(f'Total active orders: {len(self.active_orders)}')
 
         return dict(respond=True, **resp)
 
@@ -533,13 +510,18 @@ class TradingSession:
     async def run(self):
         """ Keeps system active. Stops if the buffer release limit is reached. """
         try:
-            while True:
+            while not self._stop_requested.is_set():
                 logger.info('Checking counters...')
                 if self.check_counters():
                     logger.critical('Counter limit reached, stopping...')
                     break
                 await asyncio.sleep(1)
             logger.critical('Exited the run loop.')
+        except asyncio.CancelledError:
+            logger.info('Run method cancelled, performing cleanup of trading session...')
+            await self.clean_up()
+            raise
+
         except Exception as e:
             # Handle the exception here
             logger.error(f"Exception in trading session run: {e}")

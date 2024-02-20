@@ -5,9 +5,7 @@ import uuid
 from structures.structures import OrderType, ActionType, TraderType
 from main_platform.utils import ack_message, convert_to_noise_state, convert_to_book_format, convert_to_trader_actions
 from main_platform.custom_logger import setup_custom_logger
-from external_traders.noise_trader import get_noise_rule, get_signal_noise, settings_noise, settings, \
-    get_noise_rule_unif
-from pprint import pprint
+from main_platform.utils import (CustomEncoder)
 logger = setup_custom_logger(__name__)
 
 
@@ -16,6 +14,7 @@ class BaseTrader:
     order_book: dict = None
 
     def __init__(self, trader_type: TraderType):
+        self._stop_requested = asyncio.Event() # this one we need only for traders which should be kept active in loop. For instance human traders don't need that
         self.trader_type = trader_type.value
         self.id = str(uuid.uuid4())
         logger.info(f"Trader of type {self.trader_type} created with UUID: {self.id}")
@@ -34,6 +33,7 @@ class BaseTrader:
         await self.channel.declare_queue(self.trader_queue_name, auto_delete=True)
 
     async def clean_up(self):
+        self._stop_requested.set()
         try:
             # Close the channel and connection
             if self.channel:
@@ -84,9 +84,16 @@ class BaseTrader:
 
     async def send_to_trading_system(self, message):
         # we add to any message the trader_id
+        # if self.id:
         message['trader_id'] = str(self.id)
+        # TODO. PHILIPP. The condition below is a fix for the noise trader. I don't like it but since we need to solve
+        # an issue that a single trader can't put more than one order per buffer then even 0 latency time still it results that noise traders may have some issues at warm-up
+        # since we literally don't care about noise traders inventory it's not that a big deal to not fixed id for noise trader
+        if self.trader_type == TraderType.NOISE.value:
+            message['trader_id'] = str(uuid.uuid4())
+
         await self.trading_system_exchange.publish(
-            aio_pika.Message(body=json.dumps(message).encode()),
+            aio_pika.Message(body=json.dumps(message, cls=CustomEncoder).encode()),
             routing_key=self.queue_name  # Use the dynamic queue_name
         )
 
