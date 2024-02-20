@@ -5,13 +5,11 @@ import uuid
 from main_platform.utils import ack_message
 from main_platform.custom_logger import setup_custom_logger
 from typing import List, Dict
-from structures import OrderStatus, OrderModel, OrderType, TransactionModel, LobsterEventType
+from structures import OrderStatus, OrderType, TransactionModel, LobsterEventType
 import asyncio
 import pandas as pd
-from pprint import pprint
+
 from main_platform.utils import (CustomEncoder,
-                                 create_lobster_message,
-                                 convert_to_book_format,
                                  append_combined_data_to_csv,
                                  now,
                                  )
