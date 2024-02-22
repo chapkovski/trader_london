@@ -27,14 +27,16 @@ class HumanTrader(BaseTrader):
     async def send_message_to_client(self, message_type, **kwargs):
 
         trader_orders = self.orders or []
-
+        order_book = self.order_book or {'bids':[], 'asks':[]}
         kwargs['trader_orders'] = trader_orders
         if self.websocket:
             return await self.websocket.send_json(
                 {
                     'type': message_type,
                     'inventory': self.inventory,
-                    **kwargs
+                    **kwargs,
+                    'order_book': order_book
+
                 }
             )
 
