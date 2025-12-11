@@ -14,13 +14,25 @@ from asyncio import Lock, Event
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
-# setting mongodb
+logger = setup_custom_logger(__name__)
+
+# Mongo toggle: allow disabling persistence for environments without MongoDB.
+MONGO_DISABLED = os.getenv('DISABLE_MONGO', '').lower() in ('1', 'true', 'yes')
 from mongoengine import connect
 
-connect('trader', host='localhost', port=27017)
+MONGO_ENABLED = False
+if not MONGO_DISABLED:
+    try:
+        connect(
+            db=os.getenv('MONGO_DB', 'trader'),
+            host=os.getenv('MONGO_URL', 'mongodb://localhost:27017/trader'),
+        )
+        MONGO_ENABLED = True
+    except Exception as e:
+        # If Mongo isn't reachable, continue without persistence.
+        logger.warning(f"Mongo disabled due to connection error: {e}")
 
 rabbitmq_url = os.getenv('RABBITMQ_URL', 'amqp://localhost')
-logger = setup_custom_logger(__name__)
 
 
 class TradingSession:
@@ -32,6 +44,7 @@ class TradingSession:
 
     def __init__(self, duration, default_price=1000, default_spread=10, punishing_constant=1):
         self.active = False
+        self.mongo_enabled = MONGO_ENABLED
         self.duration = duration
         self.default_price = default_price
 
@@ -55,6 +68,7 @@ class TradingSession:
         self.lock = Lock()
         self.release_event = Event()
         self.current_price = 0  # handling non-defined attribute
+        self._transactions_mem = []  # fallback when Mongo is disabled
 
     @property
     def current_time(self):
@@ -62,10 +76,10 @@ class TradingSession:
 
     @property
     def transactions(self):
-        # Fetch all TransactionModel objects that have the current TradingSession's ID
-        transactions = TransactionModel.objects(trading_session_id=self.id)
-        # Convert each transaction document into a dictionary for easier serialization
-        return [transaction.to_mongo().to_dict() for transaction in transactions]
+        if self.mongo_enabled:
+            transactions = TransactionModel.objects(trading_session_id=self.id)
+            return [transaction.to_mongo().to_dict() for transaction in transactions]
+        return self._transactions_mem
 
     @property
     def mid_price(self) -> float:
@@ -203,7 +217,8 @@ class TradingSession:
                 trading_session_id=self.id,  # Assuming self.id is the UUID of the TradingSession
                 content=message
             )
-            message_document.save()
+            if self.mongo_enabled:
+                message_document.save()
 
         exchange = await self.channel.get_exchange(self.broadcast_exchange_name)
         await exchange.publish(
@@ -297,7 +312,10 @@ class TradingSession:
             ask_order_id=ask['id'],
             price=transaction_price
         )
-        transaction.save()
+        if self.mongo_enabled:
+            transaction.save()
+        else:
+            self._transactions_mem.append(transaction.to_mongo().to_dict())
 
         # Append to self.transactions
 
