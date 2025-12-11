@@ -18,7 +18,7 @@ logger = setup_custom_logger(__name__)
 
 # Mongo toggle: allow disabling persistence for environments without MongoDB.
 MONGO_DISABLED = os.getenv('DISABLE_MONGO', '').lower() in ('1', 'true', 'yes')
-from mongoengine import connect
+from mongoengine import connect, get_connection
 
 MONGO_ENABLED = False
 if not MONGO_DISABLED:
@@ -27,6 +27,9 @@ if not MONGO_DISABLED:
             db=os.getenv('MONGO_DB', 'trader'),
             host=os.getenv('MONGO_URL', 'mongodb://localhost:27017/trader'),
         )
+        # verify connection up-front
+        conn = get_connection()
+        conn.admin.command("ping")
         MONGO_ENABLED = True
     except Exception as e:
         # If Mongo isn't reachable, continue without persistence.
@@ -77,8 +80,12 @@ class TradingSession:
     @property
     def transactions(self):
         if self.mongo_enabled:
-            transactions = TransactionModel.objects(trading_session_id=self.id)
-            return [transaction.to_mongo().to_dict() for transaction in transactions]
+            try:
+                transactions = TransactionModel.objects(trading_session_id=self.id)
+                return [transaction.to_mongo().to_dict() for transaction in transactions]
+            except Exception as e:
+                logger.warning(f"Disabling Mongo due to error fetching transactions: {e}")
+                self.mongo_enabled = False
         return self._transactions_mem
 
     @property
@@ -218,7 +225,11 @@ class TradingSession:
                 content=message
             )
             if self.mongo_enabled:
-                message_document.save()
+                try:
+                    message_document.save()
+                except Exception as e:
+                    logger.warning(f"Disabling Mongo due to error saving message: {e}")
+                    self.mongo_enabled = False
 
         exchange = await self.channel.get_exchange(self.broadcast_exchange_name)
         await exchange.publish(
@@ -313,7 +324,12 @@ class TradingSession:
             price=transaction_price
         )
         if self.mongo_enabled:
-            transaction.save()
+            try:
+                transaction.save()
+            except Exception as e:
+                logger.warning(f"Disabling Mongo due to error saving transaction: {e}")
+                self.mongo_enabled = False
+                self._transactions_mem.append(transaction.to_mongo().to_dict())
         else:
             self._transactions_mem.append(transaction.to_mongo().to_dict())
 

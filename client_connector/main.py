@@ -83,28 +83,39 @@ def get_manager_by_trader(trader_uuid: str):
 async def check_rabbitmq():
     target = rabbitmq_url
     try:
-        conn = await aio_pika.connect_robust(
-            target,
-            timeout=2,
-            connection_attempts=1,
-            reconnect_interval=1,
+        conn = await asyncio.wait_for(
+            aio_pika.connect_robust(
+                target,
+                timeout=2,
+                connection_attempts=1,
+                reconnect_interval=1,
+            ),
+            timeout=3,
         )
         await conn.close()
         return True, None, target
+    except asyncio.TimeoutError:
+        return False, "timeout", target
     except Exception as e:
         logger.warning(f"RabbitMQ health check failed: {e}")
         return False, str(e), target
 
 
-def check_mongo():
+async def check_mongo():
     if MONGO_DISABLED:
         return False, "disabled via DISABLE_MONGO"
     if not MONGO_ENABLED:
         return False, "connection failed at startup"
     try:
+        loop = asyncio.get_running_loop()
         conn = get_connection()
-        conn.admin.command("ping")
+        await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: conn.admin.command("ping")),
+            timeout=2,
+        )
         return True, None
+    except asyncio.TimeoutError:
+        return False, "timeout"
     except Exception as e:
         logger.warning(f"Mongo health check failed: {e}")
         return False, str(e)
@@ -113,7 +124,7 @@ def check_mongo():
 @app.get("/status")
 async def status():
     rabbit_ok, rabbit_err, rabbit_target = await check_rabbitmq()
-    mongo_ok, mongo_err = check_mongo()
+    mongo_ok, mongo_err = await check_mongo()
     healthy = rabbit_ok and mongo_ok
     return {
         "status": "ok" if healthy else "degraded",
