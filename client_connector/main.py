@@ -81,13 +81,19 @@ def get_manager_by_trader(trader_uuid: str):
 
 
 async def check_rabbitmq():
+    target = rabbitmq_url
     try:
-        conn = await aio_pika.connect_robust(rabbitmq_url, timeout=2)
+        conn = await aio_pika.connect_robust(
+            target,
+            timeout=2,
+            connection_attempts=1,
+            reconnect_interval=1,
+        )
         await conn.close()
-        return True, None
+        return True, None, target
     except Exception as e:
         logger.warning(f"RabbitMQ health check failed: {e}")
-        return False, str(e)
+        return False, str(e), target
 
 
 def check_mongo():
@@ -106,13 +112,13 @@ def check_mongo():
 
 @app.get("/status")
 async def status():
-    rabbit_ok, rabbit_err = await check_rabbitmq()
+    rabbit_ok, rabbit_err, rabbit_target = await check_rabbitmq()
     mongo_ok, mongo_err = check_mongo()
     healthy = rabbit_ok and mongo_ok
     return {
         "status": "ok" if healthy else "degraded",
         "services": {
-            "rabbitmq": {"ok": rabbit_ok, "error": rabbit_err},
+            "rabbitmq": {"ok": rabbit_ok, "error": rabbit_err, "target": rabbit_target},
             "mongo": {"ok": mongo_ok, "error": mongo_err},
         },
     }
