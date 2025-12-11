@@ -1,12 +1,16 @@
 import asyncio
+import os
 
 from fastapi import FastAPI, WebSocket, HTTPException, WebSocketDisconnect, BackgroundTasks
 from starlette.websockets import WebSocketState
 from fastapi.middleware.cors import CORSMiddleware
+import aio_pika
+from mongoengine.connection import get_connection
 from client_connector.trader_manager import TraderManager
 from structures import TraderCreationData
 from fastapi.responses import JSONResponse
 from main_platform.custom_logger import setup_custom_logger
+from main_platform.trading_platform import MONGO_ENABLED, MONGO_DISABLED, rabbitmq_url
 
 logger = setup_custom_logger(__name__)
 
@@ -74,6 +78,44 @@ def get_manager_by_trader(trader_uuid: str):
         return None
     trading_session_id = trader_to_session_lookup[trader_uuid]
     return trader_managers[trading_session_id]
+
+
+async def check_rabbitmq():
+    try:
+        conn = await aio_pika.connect_robust(rabbitmq_url, timeout=2)
+        await conn.close()
+        return True, None
+    except Exception as e:
+        logger.warning(f"RabbitMQ health check failed: {e}")
+        return False, str(e)
+
+
+def check_mongo():
+    if MONGO_DISABLED:
+        return False, "disabled via DISABLE_MONGO"
+    if not MONGO_ENABLED:
+        return False, "connection failed at startup"
+    try:
+        conn = get_connection()
+        conn.admin.command("ping")
+        return True, None
+    except Exception as e:
+        logger.warning(f"Mongo health check failed: {e}")
+        return False, str(e)
+
+
+@app.get("/status")
+async def status():
+    rabbit_ok, rabbit_err = await check_rabbitmq()
+    mongo_ok, mongo_err = check_mongo()
+    healthy = rabbit_ok and mongo_ok
+    return {
+        "status": "ok" if healthy else "degraded",
+        "services": {
+            "rabbitmq": {"ok": rabbit_ok, "error": rabbit_err},
+            "mongo": {"ok": mongo_ok, "error": mongo_err},
+        },
+    }
 
 
 @app.get("/trader/{trader_uuid}")
