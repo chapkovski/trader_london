@@ -149,8 +149,8 @@ class BaseTrader:
             handler = getattr(self, f'handle_{action_type}', None)
             if handler:
                 await handler(data)
-            else:
-                logger.error(f"Invalid message format: {message}")
+            elif action_type not in (None, "update"):
+                logger.warning(f"Unhandled message type: {action_type}")
             await self.post_processing_server_message(data)
 
         except json.JSONDecodeError:

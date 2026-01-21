@@ -43,7 +43,7 @@ class TraderCreationData(BaseModel):
         title="Step for New Orders",
         description="Step for new orders", )
     activity_frequency: float = Field(
-        default=1.0,
+        default=0.5,
         title="Noise Trader: Activity Frequency",
         description="Frequency of noise traders' updates in seconds",
         gt=0

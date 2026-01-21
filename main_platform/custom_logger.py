@@ -3,7 +3,9 @@
 from termcolor import colored
 import logging
 import os
-CUR_LEVEL = logging.CRITICAL
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+CUR_LEVEL = getattr(logging, LOG_LEVEL, logging.INFO)
 class CustomFormatter(logging.Formatter):
     COLORS = {
         'WARNING': 'yellow',
@@ -25,6 +27,12 @@ def setup_custom_logger(name, log_directory="logs"):
 
     logger = logging.getLogger(name)
     logger.setLevel(CUR_LEVEL)
+    logger.propagate = False
+
+    if logger.handlers:
+        for handler in logger.handlers:
+            handler.setLevel(CUR_LEVEL)
+        return logger
 
     # Console Handler
     ch = logging.StreamHandler()
