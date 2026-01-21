@@ -19,14 +19,6 @@ def now():
     return datetime.now(timezone.utc)
 
 
-GOALS = [-10, 0, 10]  # for now let's try a naive hardcoded approach to the goals
-
-
-class TradeDirection(str, Enum):
-    BUY = 'buy'
-    SELL = 'sell'
-
-
 class TraderCreationData(BaseModel):
     num_human_traders: int = Field(
         default=1,
@@ -38,12 +30,6 @@ class TraderCreationData(BaseModel):
         default=1,
         title="Number of Noise Traders",
         description="Number of noise traders",
-        ge=0
-    )
-    num_informed_traders: int = Field(
-        default=1,
-        title="Number of Informed Traders",
-        description="Number of informed traders",
         ge=0
     )
     trading_day_duration: int = Field(
@@ -66,16 +52,6 @@ class TraderCreationData(BaseModel):
         default=1,
         title="Noise Trader: Order Amount",
         description="Order amount for noise traders",
-    )
-    trade_intensity_informed: float = Field(
-        default=0.1,
-        title="Informed Trader: Trade Intensity",
-        description="Trade intensity for informed traders, e.g. she will trade 30 percent of the total orders",
-    )
-    trade_direction_informed: TradeDirection = Field(
-        default=TradeDirection.SELL,
-        title="Informed Trader: Trade Direction",
-        description="Trade direction for informed traders, to sell or buy",
     )
     noise_warm_ups: int = Field(
         default=10,
@@ -101,19 +77,6 @@ class TraderCreationData(BaseModel):
         description="Depth of the book shown to the human traders",
 
     )
-
-
-class LobsterEventType(IntEnum):
-    """For the LOBSTER data, the event type is an integer. This class maps the integer to a string.
-    See the documentation at: https://lobsterdata.com/info/DataStructure.php
-    """
-    NEW_LIMIT_ORDER = 1
-    CANCELLATION_PARTIAL = 2
-    CANCELLATION_TOTAL = 3
-    EXECUTION_VISIBLE = 4
-    EXECUTION_HIDDEN = 5
-    CROSS_TRADE = 6
-    TRADING_HALT = 7
 
 
 class ActionType(str, Enum):
@@ -143,8 +106,6 @@ class OrderStatus(str, Enum):
 
 class TraderType(str, Enum):
     NOISE = 'NOISE'
-    MARKET_MAKER = 'MARKET_MAKER'
-    INFORMED = 'INFORMED'
     HUMAN = 'HUMAN'
     # Philipp: expand this list to include new trader types if needed
 

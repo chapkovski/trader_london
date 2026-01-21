@@ -1,12 +1,6 @@
 import asyncio
 import random
-import numpy as np
 from structures import OrderType, TraderType
-from main_platform.utils import (
-    convert_to_book_format,
-    convert_to_noise_state,
-    convert_to_trader_actions,
-)
 from main_platform.custom_logger import setup_custom_logger
 from .base_trader import BaseTrader
 
@@ -19,104 +13,83 @@ class NoiseTrader(BaseTrader):
         activity_frequency: float,
         order_amount: int,
         settings: dict,
-        settings_noise: dict,
-        get_signal_noise: callable,
-        get_noise_rule_unif: callable,
     ):
         """
-        initializes the noise trader with settings and callable functions.
+        initializes the noise trader with simple, configurable behavior.
         """
         super().__init__(trader_type=TraderType.NOISE)
 
         self.activity_frequency = activity_frequency
         self.order_amount = order_amount
-        self.settings = settings
-        self.settings_noise = settings_noise
-        self.get_signal_noise = get_signal_noise
-        self.get_noise_rule_unif = get_noise_rule_unif
-        self.current_variance = 5.0
+        self.settings = settings or {}
+        self.initial_price = self.settings.get("initial_price", 1000)
+        self.price_step = self.settings.get("price_step", 1)
+        self.cancel_probability = self.settings.get("cancel_probability", 0.25)
+        self.max_price_deviation = self.settings.get("max_price_deviation", 5)
 
     def cooling_interval(self, target: float) -> float:
         """
         adjusts cooling interval using a random process.
         """
-        interval = np.random.exponential(target)
-        return interval
+        if target <= 0:
+            return 0
+        return random.expovariate(1 / target)
 
     async def act(self):
         """
         generates action based on active orders in the market.
         """
         if not self.active_orders:
+            # Kickstart the book with a single order when the market is empty.
             await self.post_new_order(
                 self.order_amount,
-                self.settings["initial_price"],
+                self.initial_price,
                 random.choice([OrderType.ASK, OrderType.BID]),
             )
             return
 
-        book_format = convert_to_book_format(self.active_orders)
-        noise_state = convert_to_noise_state(self.orders)
-        signal_noise = self.get_signal_noise(
-            signal_state=None, settings_noise=self.settings_noise
-        )
-        noise_orders = self.get_noise_rule_unif(
-            book_format, signal_noise, noise_state, self.settings_noise, self.settings
-        )
-        orders = convert_to_trader_actions(noise_orders)
+        if self.orders and random.random() < self.cancel_probability:
+            # Occasionally cancel one of our own orders to keep churn.
+            order_id = random.choice(self.orders)["id"]
+            await self.send_cancel_order_request(order_id)
+            logger.info("CANCELLED ORDER %s", order_id)
+            return
 
-        bid_count, ask_count = 0, 0
-        for order in self.active_orders:
-            if order["order_type"] == OrderType.BID:
-                bid_count += 1
-            elif order["order_type"] == OrderType.ASK:
-                ask_count += 1
+        # Otherwise place a new order near the mid price.
+        order_type = self._choose_order_type()
+        _, _, mid_price = self._get_market_prices()
+        price = self._pick_price(mid_price)
+        await self.post_new_order(self.order_amount, price, order_type)
+        logger.info("POSTED %s AT %s AMOUNT %s", order_type, price, self.order_amount)
 
-        order_type_override = None
-        order_type = None
-
+    def _choose_order_type(self) -> OrderType:
+        bid_count = sum(1 for order in self.active_orders if order["order_type"] == OrderType.BID)
+        ask_count = sum(1 for order in self.active_orders if order["order_type"] == OrderType.ASK)
         if bid_count == 0 and ask_count > 0:
-            order_type = OrderType.BID
-            order_type_override = OrderType.BID
-        elif ask_count == 0 and bid_count > 0:
-            order_type = OrderType.ASK
-            order_type_override = OrderType.ASK
+            return OrderType.BID
+        if ask_count == 0 and bid_count > 0:
+            return OrderType.ASK
+        return random.choice([OrderType.ASK, OrderType.BID])
 
-        logger.info(
-            "NO %s IN THE MARKET, PUTTING %s TO BALANCE",
-            order_type,
-            order_type_override,
-        )
+    def _get_market_prices(self):
+        bids = self.order_book.get("bids", []) if self.order_book else []
+        asks = self.order_book.get("asks", []) if self.order_book else []
+        best_bid = bids[0]["x"] if bids else None
+        best_ask = asks[0]["x"] if asks else None
+        if best_bid is not None and best_ask is not None:
+            mid_price = (best_bid + best_ask) / 2
+        elif best_bid is not None:
+            mid_price = best_bid
+        elif best_ask is not None:
+            mid_price = best_ask
+        else:
+            mid_price = self.initial_price
+        return best_bid, best_ask, mid_price
 
-        for order in orders:
-            if order_type_override is not None:
-                order["order_type"] = order_type_override
-
-            await self.process_order(order)
-
-    async def process_order(self, order):
-        if order["action_type"] == "add_order":
-            order_type = order["order_type"]
-            amount, price = self.order_amount, order["price"]
-            for _ in range(order["amount"]):
-                await self.post_new_order(amount, price, order_type)
-
-            logger.info(
-                "POSTED %s AT %s AMOUNT %s * %s",
-                order["order_type"],
-                price,
-                self.order_amount,
-                order["amount"],
-            )
-
-        elif order["action_type"] == "cancel_order" and self.orders:
-            matching_orders = [
-                o for o in self.orders if o["order_type"] == order["order_type"]
-            ]
-            if matching_orders:
-                order_id = random.choice(matching_orders)["id"]
-                await self.send_cancel_order_request(order_id)
-                logger.info("CANCELLED %s ID %s", order["order_type"], order_id[:10])
+    def _pick_price(self, mid_price):
+        offset = random.randint(-self.max_price_deviation, self.max_price_deviation)
+        price = mid_price + offset * self.price_step
+        return max(price, self.price_step)
 
     async def warm_up(self, number_of_warmup_orders: int):
         """

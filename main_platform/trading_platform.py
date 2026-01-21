@@ -2,15 +2,13 @@ import aio_pika
 import json
 import uuid
 from pydantic import ValidationError
-from pprint import pprint
 from main_platform.custom_logger import setup_custom_logger
 from typing import List, Dict
 from structures import OrderStatus, OrderType, TransactionModel, Order, TraderType, Message
 import asyncio
-import pandas as pd
 import os
 from main_platform.utils import CustomEncoder, now, if_active
-from asyncio import Lock, Event
+from asyncio import Lock
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
@@ -45,14 +43,11 @@ class TradingSession:
     transactions = List[TransactionModel]
     all_orders = Dict[uuid.UUID, Dict]
 
-    def __init__(self, duration, default_price=1000, default_spread=10, punishing_constant=1):
+    def __init__(self, duration, default_price=1000):
         self.active = False
         self.mongo_enabled = MONGO_ENABLED
         self.duration = duration
         self.default_price = default_price
-
-        self.default_spread = default_spread
-        self.punishing_constant = punishing_constant
 
         self._stop_requested = asyncio.Event()
 
@@ -66,10 +61,7 @@ class TradingSession:
         self.trader_exchange = None
 
         self.connected_traders = {}
-        self.trader_responses = {}
-        self.release_task = None
         self.lock = Lock()
-        self.release_event = Event()
         self.current_price = 0  # handling non-defined attribute
         self._transactions_mem = []  # fallback when Mongo is disabled
 
@@ -92,8 +84,6 @@ class TradingSession:
     def mid_price(self) -> float:
         return self.current_price or self.default_price
 
-    def get_closure_price(self, shares: int, order_type: OrderType) -> float:
-        return self.mid_price + order_type * shares * self.default_spread * self.punishing_constant
 
     def get_params(self):
         return {
@@ -112,23 +102,17 @@ class TradingSession:
 
     @property
     def order_book(self):
-        active_orders_df = pd.DataFrame(list(self.active_orders.values()))
         # Initialize empty order book
         order_book = {'bids': [], 'asks': []}
-        if active_orders_df.empty:
+        if not self.active_orders:
             return order_book
 
-        active_bids = active_orders_df[(active_orders_df['order_type'] == OrderType.BID)]
-        active_asks = active_orders_df[(active_orders_df['order_type'] == OrderType.ASK)]
-        if not active_bids.empty:
-            bids_grouped = active_bids.groupby('price').amount.sum().reset_index().sort_values(by='price',
-                                                                                               ascending=False)
-            order_book['bids'] = bids_grouped.rename(columns={'price': 'x', 'amount': 'y'}).to_dict('records')
-
-        # Aggregate and format asks if there are any
-        if not active_asks.empty:
-            asks_grouped = active_asks.groupby('price').amount.sum().reset_index().sort_values(by='price')
-            order_book['asks'] = asks_grouped.rename(columns={'price': 'x', 'amount': 'y'}).to_dict('records')
+        active_bids = [order for order in self.active_orders.values() if order['order_type'] == OrderType.BID]
+        active_asks = [order for order in self.active_orders.values() if order['order_type'] == OrderType.ASK]
+        if active_bids:
+            order_book['bids'] = self._aggregate_orders_by_price(active_bids, reverse=True)
+        if active_asks:
+            order_book['asks'] = self._aggregate_orders_by_price(active_asks, reverse=False)
 
         return order_book
 
@@ -145,6 +129,7 @@ class TradingSession:
     async def initialize(self):
         self.start_time = now()
         self.active = True
+        # Establish per-session exchanges/queues and start consuming trader messages.
         self.connection = await aio_pika.connect_robust(rabbitmq_url)
         self.channel = await self.connection.channel()
 
@@ -186,17 +171,29 @@ class TradingSession:
 
     def get_active_orders_to_broadcast(self):
         # TODO. PHILIPP. It's not optimal but we'll rewrite it anyway when we convert form in-memory to DB
-        active_orders_df = pd.DataFrame(list(self.active_orders.values()))
-        # lets keep only id, trader_id, order_type, amount, price
-        if active_orders_df.empty:
+        if not self.active_orders:
             return []
-        active_orders_df = active_orders_df[['id', 'trader_id', 'order_type', 'amount', 'price', 'timestamp']]
-        # TODO: PHILIPP:  I dont like that we don't use structure order type but hardcode it here.
-        # active_orders_df['order_type'] = active_orders_df['order_type'].map({-1: 'ask', 1: 'bid'})
-
-        # convert to list of dicts
-        res = active_orders_df.to_dict('records')
+        # lets keep only id, trader_id, order_type, amount, price, timestamp
+        res = []
+        for order in self.active_orders.values():
+            res.append({
+                'id': order['id'],
+                'trader_id': order['trader_id'],
+                'order_type': order['order_type'],
+                'amount': order['amount'],
+                'price': order['price'],
+                'timestamp': order['timestamp'],
+            })
         return res
+
+    @staticmethod
+    def _aggregate_orders_by_price(orders, reverse):
+        # Collapse multiple orders at the same price into one level.
+        totals = {}
+        for order in orders:
+            totals[order['price']] = totals.get(order['price'], 0) + order['amount']
+        sorted_levels = sorted(totals.items(), key=lambda item: item[0], reverse=reverse)
+        return [{'x': price, 'y': amount} for price, amount in sorted_levels]
 
     async def send_broadcast(self, message: dict, incoming_message=None):
         # TODO: PHILIPP: let's think how to make this more efficient but for simplicity
@@ -209,6 +206,7 @@ class TradingSession:
         if message.get('type') == 'closure':
             pass  # TODO. PHILIPP. Should we inject some info here?
         else:
+            # Attach a full market snapshot so traders can react without extra queries.
             spread, midpoint = self.get_spread()
             message.update({
                 # TODO: PHILIPP: we need to think about the type of the message. it's hardcoded for now
@@ -269,10 +267,6 @@ class TradingSession:
         """ Returns a list of all active orders. When we switch to real DB or mongo, we won't need it anymore."""
         return list(self.active_orders.values())
 
-    def get_file_name(self):
-        # todo: rename this to get_message_file_name
-        """Returns file name for messages which is a trading platform id + datetime of creation with _ as spaces"""
-        return f"{self.id}_{self.creation_time.strftime('%Y-%m-%d_%H-%M-%S')}"
 
     def place_order(self, order_dict: Dict):
         """ This one is called by handle_add_order, and is the one that actually places the order in the system.
@@ -343,7 +337,7 @@ class TradingSession:
 
     async def clear_orders(self):
         """ this goes through order book trying to execute orders """
-        # TODO. PHILIPP. At this stage we don't need to return anything but for LOBSTER format later we may needed so let's keep it for now
+        # Keep a summary of matches for targeted updates back to traders.
         res = {'transactions': [], 'removed_active_orders': []}
         # Separate active orders into asks and bids
         asks = [order for order in self.active_orders.values() if order['order_type'] == OrderType.ASK]
@@ -487,7 +481,6 @@ class TradingSession:
         trader_id = msg_body.get('trader_id')
         trader_type = msg_body.get('trader_type')
         self.connected_traders[trader_id] = {'trader_type': trader_type, }
-        self.trader_responses[trader_id] = False
 
         logger.info(f"Trader type  {trader_type} id {trader_id} connected.")
         logger.info(f"Total connected traders: {len(self.connected_traders)}")
@@ -510,6 +503,7 @@ class TradingSession:
                     await self.send_message_to_trader(trader_id, result)
                     #         TODO.PHILIPP. IMPORTANT! let's at this stage also send a broadcast message to all traders with updated info.
                     # IT IS FAR from optimal but for now we keep it simple. We'll refactor it later.
+                    # Broadcast after handling an action so all traders see the updated snapshot.
                     if not result.get('individual', False):
                         await self.send_broadcast(message=dict(text="book is updated"), incoming_message=incoming_message)
 
@@ -520,84 +514,6 @@ class TradingSession:
         else:
             logger.warning(f"No action found in message: {incoming_message}")
 
-    async def close_existing_book(self):
-        """we create a counteroffer on behalf of the platform with a get_closure_price price. and then we
-        create a transaction out of it."""
-        for order_id, order in self.active_orders.items():
-            platform_order_type = OrderType.ASK.value if order[
-                                                             'order_type'] == OrderType.BID else OrderType.BID
-            closure_price = self.get_closure_price(order['amount'], order['order_type'])
-            platform_order = Order(trader_id=self.id,
-                                   order_type=platform_order_type,
-                                   amount=order['amount'],
-                                   price=closure_price,
-                                   status=OrderStatus.BUFFERED.value,
-                                   session_id=self.id,
-                                   )
-
-            self.place_order(platform_order.model_dump())
-            if order['order_type'] == OrderType.BID:
-                self.create_transaction(order, platform_order.model_dump(), closure_price)
-            else:
-                self.create_transaction(platform_order.model_dump(), order, closure_price)
-
-        await self.send_broadcast(message=dict(text="book is updated"))
-
-    async def handle_inventory_report(self, data: dict):
-        # Handle received inventory report from a trader
-        trader_id = data.get('trader_id')
-        self.trader_responses[trader_id] = True
-        trader_type = self.connected_traders[trader_id]['trader_type']
-        logger.info(f'Trader ({trader_type}):  {trader_id} has reported back their inventory: {data}')
-        shares = data.get('shares', 0)
-        # if shares is positive than we need to sell them. to do this we first handle_add_order
-        # on behalf of this trader at the closure_price and then put the opposite order to buy
-        # the same amount of shares at the same price. We need to do this for each trader who has positive shares
-        if shares != 0:
-
-            trader_order_type = OrderType.ASK if shares > 0 else OrderType.BID
-            platform_order_type = OrderType.BID if shares > 0 else OrderType.ASK
-            shares = abs(shares)
-            closure_price = self.get_closure_price(shares, trader_order_type)
-
-            proto_order = dict(amount=shares,
-                               price=closure_price,
-                               status=OrderStatus.BUFFERED.value,
-                               session_id=self.id,
-
-                               )
-            trader_order = Order(trader_id=trader_id,
-                                 order_type=trader_order_type,
-                                 **proto_order
-                                 )
-            platform_order = Order(trader_id=self.id,
-                                   order_type=platform_order_type,
-                                   **proto_order
-                                   )
-            self.place_order(platform_order.model_dump())
-            self.place_order(trader_order.model_dump())
-            # let's create a transaction. it should be a bit different depending on type
-            if trader_order_type == OrderType.BID:
-                self.create_transaction(trader_order.model_dump(), platform_order.model_dump(), closure_price)
-            else:
-                self.create_transaction(platform_order.model_dump(), trader_order.model_dump(), closure_price)
-
-            traders_to_transactions_lookup = defaultdict(list)
-            trader_order = trader_order.model_dump()
-            traders_to_transactions_lookup[trader_id].append(
-                {'id': trader_order['id'], 'price': trader_order['price'],
-                 'type': trader_order['order_type'],
-                 'amount': trader_order['amount']})
-
-            await self.send_message_to_subgroup(traders_to_transactions_lookup)
-
-        # mid_price + x * spread * const)
-
-    async def wait_for_traders(self):
-        while not all(self.trader_responses.values()):
-            await asyncio.sleep(1)  # Check every second
-        logger.info('All traders have reported back their inventories.')
-
     async def run(self):
         try:
             while not self._stop_requested.is_set():
@@ -605,12 +521,9 @@ class TradingSession:
                 if current_time - self.start_time > timedelta(
                         minutes=self.duration
                 ):
+                    # Time limit reached: stop accepting orders and broadcast closure.
                     logger.critical('Time limit reached, stopping...')
                     self.active = False  # here we stop accepting all incoming requests on placing new orders, cancelling etc.
-                    await self.close_existing_book()
-                    await self.send_broadcast({"type": "stop_trading"})
-                    # Wait for each of the traders to report back their inventories
-                    await self.wait_for_traders()
                     await self.send_broadcast({"type": "closure"})
 
                     break

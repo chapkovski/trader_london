@@ -44,57 +44,13 @@ class BaseTrader:
         self.broadcast_exchange_name = None
         self.trading_system_exchange = None
 
-        # PNL BLOCK
-        self.DInv = []
-        self.transaction_prices = []
-        self.transaction_relevant_mid_prices = []  # Mid prices relevant to each transaction
-        self.general_mid_prices = []  # All mid prices from the trading system
-        self.sum_cost = 0
-        self.sum_dinv = 0
-        self.sum_mid_executions = 0
-        self.current_pnl = 0
-
         self.start_time = asyncio.get_event_loop().time()
-
-
-        # END PNL BLOCK
 
     def get_elapsed_time(self) -> float:
         """Returns the elapsed time in seconds since the trader was initialized."""
         current_time = asyncio.get_event_loop().time()
         return current_time - self.start_time
 
-    def get_vwap(self):
-        # let's for now just return the average of all transaction prices
-        return sum(self.transaction_prices) / len(self.transaction_prices) if self.transaction_prices else 0
-    def update_mid_price(self, new_mid_price):
-
-        self.general_mid_prices.append(new_mid_price)
-
-    def update_data_for_pnl(self, dinv: float, transaction_price: float) -> None:
-        relevant_mid_price = self.general_mid_prices[-1] if self.general_mid_prices else transaction_price
-
-        # Update lists
-        self.DInv.append(dinv)
-        self.transaction_prices.append(transaction_price)
-        self.transaction_relevant_mid_prices.append(relevant_mid_price)  # Store relevant mid_price for this transaction
-
-        # Update running totals
-        self.sum_cost += dinv * (transaction_price - relevant_mid_price)
-        self.sum_dinv += dinv
-        self.sum_mid_executions += relevant_mid_price * dinv
-
-        self.current_pnl = relevant_mid_price * self.sum_dinv - self.sum_mid_executions - self.sum_cost
-
-    def get_current_pnl(self, use_latest_general_mid_price=True):
-
-        if use_latest_general_mid_price and self.general_mid_prices:
-            latest_mid_price = self.general_mid_prices[-1]
-            pnl_adjusted = latest_mid_price * self.sum_dinv - self.sum_mid_executions - self.sum_cost
-            return pnl_adjusted
-        return self.current_pnl
-
-    
     @property
     def delta_cash(self):
         return self.cash - self.initial_cash
@@ -174,8 +130,7 @@ class BaseTrader:
 
             action_type = json_message.get('type')
             data = json_message
-            if data.get('midpoint'):
-                self.update_mid_price(data['midpoint'])
+            # First update local market snapshot/inventory, then call specific handlers.
             if data.get('new_transactions'):
                 self.update_inventory(data['new_transactions'])
             if not data:
@@ -212,13 +167,10 @@ class BaseTrader:
 
             if transaction['type'] == 'ask':
                 self.shares -= transaction['amount']
-                d_inv = -transaction['amount']
                 self.cash += transaction['price'] * transaction['amount']
             else:
                 self.shares += transaction['amount']
-                d_inv = transaction['amount']
                 self.cash -= transaction['price'] * transaction['amount']
-            self.update_data_for_pnl(d_inv, transaction['price'])
         if self.trader_type == TraderType.HUMAN.value:
             logger.info(f"Trader {self.id} updated inventory: shares: {self.shares}, cash: {self.cash}")
 
@@ -272,16 +224,3 @@ class BaseTrader:
 
         self._stop_requested.set()
         await self.clean_up()
-
-    async def handle_stop_trading(self, data):
-        """Handle stop trading messages from the trading system."""
-        logger.critical(
-            f"Trader {self.id}: type: {self.trader_type}. Stop trading signal received. Preparing to stop trading activities.")
-
-        await self.send_to_trading_system({
-            "action": 'inventory_report',
-            "trader_id": self.id,
-            "shares": self.shares,
-            "cash": self.cash
-        })
-        self._stop_requested.set()

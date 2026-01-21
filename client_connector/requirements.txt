@@ -8,4 +8,3 @@ pika
 aio-pika
 termcolor
 numba
-pandas

@@ -4,13 +4,9 @@ Upon the request  of a client, it lauchnes new trading sessions and/or helps fin
 so they can communicate with them.
 """
 
-import uuid
-
-from external_traders.noise_trader import get_signal_noise, settings_noise, settings, get_noise_rule_unif
-from external_traders.informed_naive import get_signal_informed, get_order_to_match, settings_informed, update_settings_informed
 from structures import TraderCreationData
 from typing import List
-from traders import HumanTrader, NoiseTrader, InformedTrader
+from traders import HumanTrader, NoiseTrader
 
 from main_platform import TradingSession
 
@@ -27,7 +23,6 @@ class TraderManager:
     traders = {}
     human_traders = List[HumanTrader]
     noise_traders = List[NoiseTrader]
-    informed_traders = List[InformedTrader]
 
     def __init__(self, params: TraderCreationData):
 
@@ -37,8 +32,6 @@ class TraderManager:
         self.tasks = []
         n_noise_traders = params.get("num_noise_traders", 1)
 
-        n_informed_traders = params.get("num_informed_traders", 1)
-
         cash= params.get("initial_cash", 0)
         shares= params.get("initial_stocks", 0)
 
@@ -47,29 +40,20 @@ class TraderManager:
         n_human_traders = params.get("num_human_traders", 1)
         self.noise_warm_ups = params.get("noise_warm_ups", 10)
 
+        base_price = params.get("initial_price", 1000)
+        noise_settings = {
+            "initial_price": base_price,
+            "price_step": params.get("step", 1),
+            "cancel_probability": 0.25,
+            "max_price_deviation": 5,
+        }
         self.noise_traders = [NoiseTrader(activity_frequency=params.get('activity_frequency'),
                                           order_amount=params.get('order_amount'), 
-                                          settings=settings,
-                                          settings_noise=settings_noise,
-                                          get_signal_noise=get_signal_noise,
-                                          get_noise_rule_unif=get_noise_rule_unif) for _ in range(n_noise_traders)]
+                                          settings=noise_settings) for _ in range(n_noise_traders)]
 
-        settings_informed['time_period_in_min'] = params.get('trading_day_duration')
-        settings_informed['trade_intensity'] = params.get('trade_intensity_informed')
-        settings_informed['direction'] = params.get('trade_direction_informed')
-        updated_settings_informed, informed_time_plan, informed_state = update_settings_informed(settings_informed)
-        self.informed_traders = [InformedTrader(activity_frequency=params.get('activity_frequency'), 
-                                                settings=settings, 
-                                                settings_informed=updated_settings_informed, 
-                                                informed_time_plan=informed_time_plan,
-                                                informed_state=informed_state,
-                                                get_signal_informed=get_signal_informed,
-                                                get_order_to_match=get_order_to_match) for _ in range(n_informed_traders)]
-                
         self.human_traders = [HumanTrader(cash=cash, shares=shares) for _ in range(n_human_traders)]
 
-
-        self.traders = {t.id: t for t in self.noise_traders + self.informed_traders + self.human_traders}
+        self.traders = {t.id: t for t in self.noise_traders + self.human_traders}
         self.trading_session = TradingSession(duration=params['trading_day_duration'])
 
 
@@ -83,10 +67,12 @@ class TraderManager:
             await trader.connect_to_session(trading_session_uuid=self.trading_session.id)
 
         for trader in self.noise_traders:
+            # Seed the book with a few orders so early spreads are non-empty.
             await trader.warm_up(number_of_warmup_orders=self.noise_warm_ups)
 
         await self.trading_session.send_broadcast({"content": "Market is open"})
 
+        # Run the session loop and all traders concurrently.
         trading_session_task = asyncio.create_task(self.trading_session.run())
         trader_tasks = [asyncio.create_task(i.run()) for i in self.traders.values()]
 

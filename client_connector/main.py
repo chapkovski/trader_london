@@ -145,7 +145,6 @@ async def get_trader(trader_uuid: str):
         raise HTTPException(status_code=404, detail="Trader not found")
     trader_data = trader.get_trader_params_as_dict()
     data=trader_manager.get_params()
-    data['goal']=trader_data['goal']
     return {
         "status": "success",
         "message": "Trader found",

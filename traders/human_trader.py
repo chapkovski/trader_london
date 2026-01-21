@@ -1,9 +1,8 @@
 from .base_trader import BaseTrader
 from starlette.websockets import WebSocketDisconnect, WebSocketState
-import random
 import json
 
-from structures import TraderType, OrderType, GOALS
+from structures import TraderType, OrderType
 from main_platform.custom_logger import setup_custom_logger
 
 logger = setup_custom_logger(__name__)
@@ -16,14 +15,12 @@ class HumanTrader(BaseTrader):
     
     def __init__(self, *args, **kwargs):
         super().__init__(trader_type=TraderType.HUMAN, *args, **kwargs)
-        self.goal = random.choice(GOALS)
     def get_trader_params_as_dict(self):
         return {
             'id': self.id,
             'type': self.trader_type,
             'initial_cash': self.initial_cash,
-            'initial_shares': self.initial_shares,
-            'goal': self.goal
+            'initial_shares': self.initial_shares
         }
 
     async def post_processing_server_message(self, json_message):
@@ -53,7 +50,6 @@ class HumanTrader(BaseTrader):
             return await self.websocket.send_json(
                 {"shares": self.shares,
                  "cash": self.cash,
-                 "pnl": self.get_current_pnl(),
 
                  'type': message_type,
                  'inventory': dict(shares=self.shares, cash=self.cash),
@@ -62,8 +58,6 @@ class HumanTrader(BaseTrader):
                  'order_book': order_book,
                  'initial_cash': self.initial_cash,
                  'initial_shares': self.initial_shares,
-                 'sum_dinv': self.sum_dinv,
-                 'vwap': self.get_vwap()
                  }
             )
         except WebSocketDisconnect:
