@@ -251,6 +251,7 @@ class TradingSession:
             'type': 'update',  # TODO: PHILIPP: we need to think about the type of the message. it's hardcoded for now
             'order_book': self.order_book,
             'active_orders': self.get_active_orders_to_broadcast(),
+            'trader_orders': self.get_orders_for_trader(trader_id),
             'transaction_history': self.transactions,
             'spread': spread,
             'mid_price': mid_price,
@@ -266,6 +267,14 @@ class TradingSession:
     def list_active_orders(self):
         """ Returns a list of all active orders. When we switch to real DB or mongo, we won't need it anymore."""
         return list(self.active_orders.values())
+
+    def get_orders_for_trader(self, trader_id):
+        """Returns all orders (any status) that belong to the given trader."""
+        return [
+            order
+            for order in self.all_orders.values()
+            if order.get('trader_id') == trader_id
+        ]
 
 
     def place_order(self, order_dict: Dict):

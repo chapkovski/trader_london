@@ -45,6 +45,7 @@ class BaseTrader:
         self.trading_system_exchange = None
 
         self.start_time = asyncio.get_event_loop().time()
+        self.full_orders = []
 
     def get_elapsed_time(self) -> float:
         """Returns the elapsed time in seconds since the trader was initialized."""
