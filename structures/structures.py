@@ -60,13 +60,13 @@ class TraderCreationData(BaseModel):
         gt=0
     )
     initial_cash: float = Field(
-        default=100000,
+        default=2600,
         title="Initial Cash",
         description="Initial cash for each trader",
 
     )
     initial_stocks: int = Field(
-        default=100,
+        default=20,
         title="Initial Stocks",
         description="Initial stocks for each trader",
 
