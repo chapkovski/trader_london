@@ -77,6 +77,12 @@ class TraderCreationData(BaseModel):
         description="Depth of the book shown to the human traders",
 
     )
+    alert_streak_frequency: int = Field(
+        default=3,
+        title="Alert Streak Frequency",
+        description="How many consecutive price moves trigger an alert",
+        ge=1
+    )
 
 
 class ActionType(str, Enum):

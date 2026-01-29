@@ -43,11 +43,12 @@ class TradingSession:
     transactions = List[TransactionModel]
     all_orders = Dict[uuid.UUID, Dict]
 
-    def __init__(self, duration, default_price=1000):
+    def __init__(self, duration, default_price=1000, alert_streak_frequency=4):
         self.active = False
         self.mongo_enabled = MONGO_ENABLED
         self.duration = duration
         self.default_price = default_price
+        self.alert_streak_frequency = max(1, int(alert_streak_frequency or 1))
 
         self._stop_requested = asyncio.Event()
 
@@ -64,6 +65,64 @@ class TradingSession:
         self.lock = Lock()
         self.current_price = 0  # handling non-defined attribute
         self._transactions_mem = []  # fallback when Mongo is disabled
+        self._last_broadcast_price = None
+        self._last_seen_price = None
+        self._last_seen_transaction_key = None
+        self._alert_streak_dir = None
+        self._alert_streak_count = 0
+
+    @staticmethod
+    def _transaction_ts(transaction):
+        ts = transaction.get('timestamp')
+        if hasattr(ts, "timestamp"):
+            return ts.timestamp()
+        return ts or 0
+
+    def _latest_transaction_price(self, transactions):
+        if not transactions:
+            return None
+        latest = max(transactions, key=self._transaction_ts)
+        return latest.get('price')
+
+    def _build_alert_message(self, transactions):
+        if not transactions:
+            return "", None
+        ordered = sorted(transactions, key=self._transaction_ts)
+        latest_price = ordered[-1].get('price')
+        if latest_price is None:
+            return "", None
+        latest = ordered[-1]
+        latest_key = (self._transaction_ts(latest), latest_price)
+        if self._last_seen_transaction_key == latest_key:
+            return "", latest_price
+        self._last_seen_transaction_key = latest_key
+
+        prev_price = self._last_seen_price
+        self._last_seen_price = latest_price
+        if prev_price is None:
+            return "", latest_price
+
+        if latest_price > prev_price:
+            direction = "up"
+        elif latest_price < prev_price:
+            direction = "down"
+        else:
+            self._alert_streak_dir = None
+            self._alert_streak_count = 0
+            return "", latest_price
+
+        if direction == self._alert_streak_dir:
+            self._alert_streak_count += 1
+        else:
+            self._alert_streak_dir = direction
+            self._alert_streak_count = 1
+
+        if self._alert_streak_count % self.alert_streak_frequency == 0:
+            return (
+                f"Price goes {direction} {self._alert_streak_count} times in a row!",
+                latest_price,
+            )
+        return "", latest_price
 
     @property
     def current_time(self):
@@ -73,7 +132,7 @@ class TradingSession:
     def transactions(self):
         if self.mongo_enabled:
             try:
-                transactions = TransactionModel.objects(trading_session_id=self.id)
+                transactions = TransactionModel.objects(trading_session_id=self.id).order_by("timestamp")
                 return [transaction.to_mongo().to_dict() for transaction in transactions]
             except Exception as e:
                 logger.warning(f"Disabling Mongo due to error fetching transactions: {e}")
@@ -208,16 +267,23 @@ class TradingSession:
         else:
             # Attach a full market snapshot so traders can react without extra queries.
             spread, midpoint = self.get_spread()
+            transactions = self.transactions or []
+            alert_message, latest_price = self._build_alert_message(transactions)
             message.update({
                 # TODO: PHILIPP: we need to think about the type of the message. it's hardcoded for now
                 'order_book': self.order_book,
                 'active_orders': self.get_active_orders_to_broadcast(),
-                'history': self.transactions,
+                'history': transactions,
                 'spread': spread,
                 'midpoint': midpoint,
-                'transaction_price': self.transaction_price,
+                'transaction_price': latest_price,
                 'incoming_message': incoming_message
             })
+            if alert_message:
+                message['alert_message'] = alert_message
+            logger.debug(
+                f"Broadcast alert_message='{alert_message}' latest_price={latest_price}"
+            )
             message_document = Message(
                 trading_session_id=self.id,  # Assuming self.id is the UUID of the TradingSession
                 content=message
@@ -238,26 +304,21 @@ class TradingSession:
     async def send_message_to_trader(self, trader_id, message):
 
         # TODO. PHILIPP. IT largely overlap with broadcast. We need to refactor that moving to _injection method
-        transactions = [{'price': t['price'], 'timestamp': t['timestamp'].timestamp()} for t in self.transactions]
-        # sort by timestamp
-        transactions.sort(key=lambda x: x['timestamp'])
-        # if not empty return the last one for current price
-        if transactions:
-            current_price = transactions[-1]['price']
-        else:
-            current_price = None
+        transactions = self.transactions or []
+        current_price = self._latest_transaction_price(transactions)
         spread, mid_price = self.get_spread()
         message.update({
             'type': 'update',  # TODO: PHILIPP: we need to think about the type of the message. it's hardcoded for now
             'order_book': self.order_book,
             'active_orders': self.get_active_orders_to_broadcast(),
             'trader_orders': self.get_orders_for_trader(trader_id),
-            'transaction_history': self.transactions,
+            'transaction_history': transactions,
             'spread': spread,
             'mid_price': mid_price,
 
             'current_price': current_price,
         })
+        logger.debug(f"Trader {trader_id} current_price={current_price}")
         await self.trader_exchange.publish(
             aio_pika.Message(body=json.dumps(message, cls=CustomEncoder).encode()),
             routing_key=f'trader_{trader_id}'

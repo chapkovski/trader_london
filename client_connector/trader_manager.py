@@ -54,7 +54,10 @@ class TraderManager:
         self.human_traders = [HumanTrader(cash=cash, shares=shares) for _ in range(n_human_traders)]
 
         self.traders = {t.id: t for t in self.noise_traders + self.human_traders}
-        self.trading_session = TradingSession(duration=params['trading_day_duration'])
+        self.trading_session = TradingSession(
+            duration=params['trading_day_duration'],
+            alert_streak_frequency=params.get("alert_streak_frequency", 4),
+        )
 
 
 
