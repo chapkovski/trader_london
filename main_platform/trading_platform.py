@@ -276,7 +276,7 @@ class TradingSession:
                 elapsed = (now() - self.start_time).total_seconds()
                 if elapsed >= 20:
                     dividend = random.choice([0, 8, 16, 24])
-                    alert_message = f"Dividends for this trading day are announced to be: {dividend}"
+                    alert_message = f"Stock paid a dividend of: ${dividend}"
                     self._dividend_announced = True
             message.update({
                 # TODO: PHILIPP: we need to think about the type of the message. it's hardcoded for now
