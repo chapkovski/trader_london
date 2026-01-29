@@ -11,6 +11,7 @@ from main_platform.utils import CustomEncoder, now, if_active
 from asyncio import Lock
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
+import random
 
 logger = setup_custom_logger(__name__)
 
@@ -43,12 +44,13 @@ class TradingSession:
     transactions = List[TransactionModel]
     all_orders = Dict[uuid.UUID, Dict]
 
-    def __init__(self, duration, default_price=1000, alert_streak_frequency=4):
+    def __init__(self, duration, default_price=1000, alert_streak_frequency=4, allow_self_trade=False):
         self.active = False
         self.mongo_enabled = MONGO_ENABLED
         self.duration = duration
         self.default_price = default_price
         self.alert_streak_frequency = max(1, int(alert_streak_frequency or 1))
+        self.allow_self_trade = bool(allow_self_trade)
 
         self._stop_requested = asyncio.Event()
 
@@ -70,6 +72,7 @@ class TradingSession:
         self._last_seen_transaction_key = None
         self._alert_streak_dir = None
         self._alert_streak_count = 0
+        self._dividend_announced = False
 
     @staticmethod
     def _transaction_ts(transaction):
@@ -269,6 +272,12 @@ class TradingSession:
             spread, midpoint = self.get_spread()
             transactions = self.transactions or []
             alert_message, latest_price = self._build_alert_message(transactions)
+            if not self._dividend_announced and self.start_time:
+                elapsed = (now() - self.start_time).total_seconds()
+                if elapsed >= 20:
+                    dividend = random.choice([0, 8, 16, 24])
+                    alert_message = f"Dividends for this trading day are announced to be: {dividend}"
+                    self._dividend_announced = True
             message.update({
                 # TODO: PHILIPP: we need to think about the type of the message. it's hardcoded for now
                 'order_book': self.order_book,
@@ -452,7 +461,7 @@ class TradingSession:
             ask_trader_type = self.connected_traders[ask['trader_id']]['trader_type']
             ask_trader_id = ask.get('trader_id')
             bid_trader_id = bid.get('trader_id')
-            if ask_trader_type == TraderType.HUMAN.value and ask_trader_id == bid_trader_id:
+            if (not self.allow_self_trade) and ask_trader_type == TraderType.HUMAN.value and ask_trader_id == bid_trader_id:
                 logger.warning(f'Blocking self-execution for trader {ask_trader_id}')
                 return res
             ask_trader_id, bid_trader_id, transaction = self.create_transaction(bid, ask, transaction_price)

@@ -57,6 +57,7 @@ class TraderManager:
         self.trading_session = TradingSession(
             duration=params['trading_day_duration'],
             alert_streak_frequency=params.get("alert_streak_frequency", 4),
+            allow_self_trade=params.get("allow_self_trade", False),
         )
 
 

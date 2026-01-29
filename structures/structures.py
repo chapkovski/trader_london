@@ -83,6 +83,11 @@ class TraderCreationData(BaseModel):
         description="How many consecutive price moves trigger an alert",
         ge=1
     )
+    allow_self_trade: bool = Field(
+        default=False,
+        title="Allow Self Trade",
+        description="Allow a human trader to match against their own orders"
+    )
 
 
 class ActionType(str, Enum):
