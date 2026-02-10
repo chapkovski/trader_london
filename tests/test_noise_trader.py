@@ -4,59 +4,52 @@ from traders import NoiseTrader
 from structures import TraderType, OrderType
 
 @pytest.fixture
-def noise_trader_settings():
-    return {
-        "activity_frequency": 1.0,
-        "order_amount": 1,
-        "settings": {
-            "initial_price": 100,
-            "price_step": 1,
-            "cancel_probability": 0.25,
-            "max_price_deviation": 5,
-        },
-    }
-
-@pytest.fixture
-def noise_trader(noise_trader_settings):
-    return NoiseTrader(**noise_trader_settings)
+def noise_trader():
+    return NoiseTrader(max_orders_per_minute=3)
 
 
 def test_initialization(noise_trader):
-    assert noise_trader.activity_frequency == 1.0
-    assert noise_trader.initial_price == 100
-    assert noise_trader.price_step == 1
+    assert noise_trader.max_orders_per_minute == 3
     assert noise_trader.trader_type == TraderType.NOISE
 
 
-def test_cooling_interval(noise_trader):
-    target = 5.0
-    interval = noise_trader.cooling_interval(target)
-    assert interval >= 0, "Interval should be non-negative"
+def test_orders_for_next_minute_is_capped(noise_trader):
+    with patch.object(noise_trader, "_sample_poisson", return_value=7):
+        assert noise_trader.orders_for_next_minute() == 3
+    with patch.object(noise_trader, "_sample_poisson", return_value=2):
+        assert noise_trader.orders_for_next_minute() == 2
 
 
 @pytest.mark.asyncio
-async def test_act_with_no_active_orders(noise_trader):
-    noise_trader.active_orders = []
+async def test_act_requires_human_bid_and_ask(noise_trader):
+    noise_trader.active_orders = [
+        {"trader_id": "human-1", "order_type": OrderType.BID, "price": 1000},
+        {"trader_id": noise_trader.id, "order_type": OrderType.ASK, "price": 1100},
+    ]
     noise_trader.post_new_order = AsyncMock()
     await noise_trader.act()
-    noise_trader.post_new_order.assert_awaited_once()
+    noise_trader.post_new_order.assert_not_awaited()
+
 
 @pytest.mark.asyncio
-async def test_act_with_cancel_order(noise_trader):
-    noise_trader.active_orders = [{"order_type": OrderType.BID}]
-    noise_trader.orders = [{"id": "1", "order_type": "ask"}]
-    noise_trader.cancel_probability = 1.0
-    noise_trader.send_cancel_order_request = AsyncMock()
-    with patch("random.random", return_value=0.0):
+async def test_act_market_buy(noise_trader):
+    noise_trader.active_orders = [
+        {"trader_id": "human-bid", "order_type": OrderType.BID, "price": 1000},
+        {"trader_id": "human-ask", "order_type": OrderType.ASK, "price": 1100},
+    ]
+    noise_trader.post_new_order = AsyncMock()
+    with patch("random.choice", return_value="market_buy"):
         await noise_trader.act()
-    noise_trader.send_cancel_order_request.assert_awaited_once_with("1")
+    noise_trader.post_new_order.assert_awaited_once_with(1, 1100, OrderType.BID)
 
 
 @pytest.mark.asyncio
-async def test_act_with_add_order(noise_trader):
-    noise_trader.active_orders = [{"order_type": OrderType.BID}]
-    noise_trader.orders = []
-    noise_trader.cancel_probability = 0.0
+async def test_act_limit_sell_uses_double_spread_distance(noise_trader):
+    noise_trader.active_orders = [
+        {"trader_id": "human-bid", "order_type": OrderType.BID, "price": 1000},
+        {"trader_id": "human-ask", "order_type": OrderType.ASK, "price": 1100},
+    ]
     noise_trader.post_new_order = AsyncMock()
-    await noise_trader.act()
-    noise_trader.post_new_order.assert_awaited_once()
+    with patch("random.choice", return_value="limit_sell"):
+        await noise_trader.act()
+    noise_trader.post_new_order.assert_awaited_once_with(1, 1300, OrderType.ASK)

@@ -1,8 +1,9 @@
 import pytest
 import asyncio
+import uuid
 from unittest.mock import AsyncMock, patch
 from main_platform import TradingSession
-from structures import OrderStatus, OrderType
+from structures import OrderStatus, OrderType, TraderType
 
 
 @pytest.mark.asyncio
@@ -159,3 +160,44 @@ async def test_clean_up():
     session.channel.close.assert_awaited()
     session.connection.close.assert_awaited()
     assert session.active is False
+
+
+@pytest.mark.asyncio
+async def test_clear_orders_partial_fill_updates_remaining_amount():
+    session = TradingSession(duration=1)
+    ask_order_id = uuid.uuid4()
+    bid_order_id = uuid.uuid4()
+    session.connected_traders = {
+        "ask_trader": {"trader_type": TraderType.HUMAN.value},
+        "bid_trader": {"trader_type": TraderType.HUMAN.value},
+    }
+    session.all_orders = {
+        ask_order_id: {
+            "id": ask_order_id,
+            "trader_id": "ask_trader",
+            "order_type": OrderType.ASK.value,
+            "price": 1000,
+            "amount": 1,
+            "timestamp": "2023-04-01T00:00:10Z",
+            "status": OrderStatus.ACTIVE.value,
+        },
+        bid_order_id: {
+            "id": bid_order_id,
+            "trader_id": "bid_trader",
+            "order_type": OrderType.BID.value,
+            "price": 1100,
+            "amount": 3,
+            "timestamp": "2023-04-01T00:00:05Z",
+            "status": OrderStatus.ACTIVE.value,
+        },
+    }
+
+    result = await session.clear_orders()
+
+    assert session.all_orders[ask_order_id]["status"] == OrderStatus.EXECUTED.value
+    assert session.all_orders[ask_order_id]["amount"] == 0
+    assert session.all_orders[bid_order_id]["status"] == OrderStatus.ACTIVE.value
+    assert session.all_orders[bid_order_id]["amount"] == 2
+    assert "subgroup_broadcast" in result
+    assert result["subgroup_broadcast"]["ask_trader"][0]["amount"] == 1
+    assert result["subgroup_broadcast"]["bid_trader"][0]["amount"] == 1

@@ -385,10 +385,6 @@ class TradingSession:
             return None, None
 
     def create_transaction(self, bid, ask, transaction_price):
-        # Change the status to 'EXECUTED'
-        self.all_orders[ask['id']]['status'] = OrderStatus.EXECUTED.value
-        self.all_orders[bid['id']]['status'] = OrderStatus.EXECUTED.value
-
         # Create a transaction object with automatic id and timestamp generation
         transaction = TransactionModel(
             trading_session_id=self.id,  # Assuming session_id is the UUID of the TradingSession
@@ -414,6 +410,18 @@ class TradingSession:
         # Return trader IDs involved in the transaction for further processing
         return ask['trader_id'], bid['trader_id'], transaction
 
+    def _apply_fill(self, order_id, fill_amount):
+        """Apply a partial or full fill to one active order."""
+        order = self.all_orders[order_id]
+        remaining = float(order['amount']) - float(fill_amount)
+        if remaining <= 0:
+            order['amount'] = 0
+            order['status'] = OrderStatus.EXECUTED.value
+            order['execution_timestamp'] = now()
+        else:
+            order['amount'] = remaining
+            order['status'] = OrderStatus.ACTIVE.value
+
     async def clear_orders(self):
         """ this goes through order book trying to execute orders """
         # Keep a summary of matches for targeted updates back to traders.
@@ -428,57 +436,45 @@ class TradingSession:
         # Sort by price (highest first for bids), and then by timestamp (oldest first)
         bids.sort(key=lambda x: (-x['price'], x['timestamp']))
 
-        # Calculate the spread
-        # TODO. Philipp. We actually already have this method above. We need to refactor it. We need a separate method
-        # because we also return spread to traders in broadcast messages.
-        if asks and bids:
-            lowest_ask = asks[0]['price']
-            highest_bid = bids[0]['price']
-            spread = lowest_ask - highest_bid
-        else:
+        if not asks or not bids:
             logger.info("No overlapping orders.")
             return res
 
-        # Check if any transactions are possible
-        if spread > 0:
-            logger.info(
-                f"No overlapping orders. Spread is positive: {spread}. Lowest ask: {lowest_ask}, highest bid: {highest_bid}")
-            return res
-
-        # Filter the bids and asks that could be involved in a transaction
-        viable_asks = [ask for ask in asks if ask['price'] <= highest_bid]
-        viable_bids = [bid for bid in bids if bid['price'] >= lowest_ask]
-
         transactions = []
-        participated_traders = set()
         traders_to_transactions_lookup = defaultdict(list)
-        # Create transactions
-        while viable_asks and viable_bids:
-            ask = viable_asks.pop(0)
-            bid = viable_bids.pop(0)
+        # Create transactions with price-time priority and partial fills.
+        while asks and bids:
+            ask = asks[0]
+            bid = bids[0]
+            if ask['price'] > bid['price']:
+                break
 
-            transaction_price = (ask['price'] + bid['price']) / 2  # Mid-price
+            transaction_price = (ask['price'] + bid['price']) / 2
+            transaction_amount = min(float(ask['amount']), float(bid['amount']))
             ask_trader_type = self.connected_traders[ask['trader_id']]['trader_type']
             ask_trader_id = ask.get('trader_id')
             bid_trader_id = bid.get('trader_id')
             if (not self.allow_self_trade) and ask_trader_type == TraderType.HUMAN.value and ask_trader_id == bid_trader_id:
                 logger.warning(f'Blocking self-execution for trader {ask_trader_id}')
-                return res
-            ask_trader_id, bid_trader_id, transaction = self.create_transaction(bid, ask, transaction_price)
+                break
+            _, _, transaction = self.create_transaction(bid, ask, transaction_price)
+            self._apply_fill(ask['id'], transaction_amount)
+            self._apply_fill(bid['id'], transaction_amount)
 
             # No need to append the transaction to self.transactions here as it's handled within create_transaction
-
-            # Process involved trader IDs as needed (e.g., logging, updating trader states)
-            participated_traders.add(ask_trader_id)
-            participated_traders.add(bid_trader_id)
 
             # we  need to get the trader_in_transcation_lookup and if it's
             # not there we need to create it.
             # let's not add the entire transaction here, just the order id, price, type of order, amount - so they can correclty update the inventory
             traders_to_transactions_lookup[ask['trader_id']].append(
-                {'id': ask['id'], 'price': ask['price'], 'type': 'ask', 'amount': ask['amount']})
+                {'id': ask['id'], 'price': transaction_price, 'type': 'ask', 'amount': transaction_amount})
             traders_to_transactions_lookup[bid['trader_id']].append(
-                {'id': bid['id'], 'price': bid['price'], 'type': 'bid', 'amount': bid['amount']})
+                {'id': bid['id'], 'price': transaction_price, 'type': 'bid', 'amount': transaction_amount})
+
+            if self.all_orders[ask['id']]['status'] == OrderStatus.EXECUTED.value:
+                asks.pop(0)
+            if self.all_orders[bid['id']]['status'] == OrderStatus.EXECUTED.value:
+                bids.pop(0)
 
             transactions.append(transaction)
 

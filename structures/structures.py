@@ -26,14 +26,8 @@ class TraderCreationData(BaseModel):
         description="Number of human traders",
         ge=0
     )
-    num_noise_traders: int = Field(
-        default=1,
-        title="Number of Noise Traders",
-        description="Number of noise traders",
-        ge=0
-    )
     trading_day_duration: int = Field(
-        default=1,
+        default=5,
         title="Trading Day Duration",
         description="Duration of the trading day in minutes",
         gt=0
@@ -42,22 +36,11 @@ class TraderCreationData(BaseModel):
         default=1,
         title="Step for New Orders",
         description="Step for new orders", )
-    activity_frequency: float = Field(
-        default=0.5,
-        title="Noise Trader: Activity Frequency",
-        description="Frequency of noise traders' updates in seconds",
-        gt=0
-    )
-    order_amount: int = Field(
-        default=1,
-        title="Noise Trader: Order Amount",
-        description="Order amount for noise traders",
-    )
-    noise_warm_ups: int = Field(
-        default=10,
-        title="Noise Warm Ups",
-        description="Number of warm up periods for noise traders",
-        gt=0
+    max_orders_per_minute: int = Field(
+        default=3,
+        title="Noise Trader: Max Orders Per Minute",
+        description="Capped Poisson intensity for the single noise trader (0..max orders each minute)",
+        ge=0
     )
     initial_cash: float = Field(
         default=2600,
@@ -84,7 +67,7 @@ class TraderCreationData(BaseModel):
         ge=1
     )
     allow_self_trade: bool = Field(
-        default=False,
+        default=True,
         title="Allow Self Trade",
         description="Allow a human trader to match against their own orders"
     )

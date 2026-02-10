@@ -30,7 +30,6 @@ class TraderManager:
         params=params.model_dump()
         logger.critical(f"TraderManager params: {params}")
         self.tasks = []
-        n_noise_traders = params.get("num_noise_traders", 1)
 
         cash= params.get("initial_cash", 0)
         shares= params.get("initial_stocks", 0)
@@ -38,18 +37,9 @@ class TraderManager:
         # TODO: we may start launching with more than one human trader later.
         # So far for debugging purposes we only need one human trader whose id we return to the client
         n_human_traders = params.get("num_human_traders", 1)
-        self.noise_warm_ups = params.get("noise_warm_ups", 10)
-
-        base_price = params.get("initial_price", 1000)
-        noise_settings = {
-            "initial_price": base_price,
-            "price_step": params.get("step", 1),
-            "cancel_probability": 0.25,
-            "max_price_deviation": 5,
-        }
-        self.noise_traders = [NoiseTrader(activity_frequency=params.get('activity_frequency'),
-                                          order_amount=params.get('order_amount'), 
-                                          settings=noise_settings) for _ in range(n_noise_traders)]
+        self.noise_traders = [
+            NoiseTrader(max_orders_per_minute=params.get("max_orders_per_minute", 3))
+        ]
 
         self.human_traders = [HumanTrader(cash=cash, shares=shares) for _ in range(n_human_traders)]
 
@@ -69,10 +59,6 @@ class TraderManager:
         for trader_id, trader in self.traders.items():
             await trader.initialize()
             await trader.connect_to_session(trading_session_uuid=self.trading_session.id)
-
-        for trader in self.noise_traders:
-            # Seed the book with a few orders so early spreads are non-empty.
-            await trader.warm_up(number_of_warmup_orders=self.noise_warm_ups)
 
         await self.trading_session.send_broadcast({"content": "Market is open"})
 

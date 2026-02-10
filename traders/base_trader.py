@@ -138,10 +138,10 @@ class BaseTrader:
                 logger.error('no data from trading system')
                 return
             order_book = data.get('order_book')
-            if order_book:
+            if order_book is not None:
                 self.order_book = order_book
             active_orders = data.get('active_orders')
-            if active_orders:
+            if active_orders is not None:
                 self.active_orders = active_orders
                 own_orders = [order for order in active_orders if order['trader_id'] == self.id]
                 # lets convert the order list to a dictionary with keys as order ids
