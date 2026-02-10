@@ -37,10 +37,21 @@ class TraderCreationData(BaseModel):
         title="Step for New Orders",
         description="Step for new orders", )
     max_orders_per_minute: int = Field(
-        default=3,
+        default=30,
         title="Noise Trader: Max Orders Per Minute",
         description="Capped Poisson intensity for the single noise trader (0..max orders each minute)",
         ge=0
+    )
+    initial_midpoint: float = Field(
+        default=100,
+        title="Initial Midpoint",
+        description="Starting midpoint used by the noise trader to seed the first bid/ask",
+    )
+    initial_spread: float = Field(
+        default=10,
+        title="Initial Spread",
+        description="Starting spread used by the noise trader to seed the first bid/ask",
+        gt=0
     )
     initial_cash: float = Field(
         default=2600,
@@ -52,12 +63,6 @@ class TraderCreationData(BaseModel):
         default=20,
         title="Initial Stocks",
         description="Initial stocks for each trader",
-
-    )
-    depth_book_shown: int = Field(
-        default=5,
-        title="Depth Book Shown",
-        description="Depth of the book shown to the human traders",
 
     )
     alert_streak_frequency: int = Field(

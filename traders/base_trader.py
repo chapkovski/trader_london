@@ -46,6 +46,7 @@ class BaseTrader:
 
         self.start_time = asyncio.get_event_loop().time()
         self.full_orders = []
+        self.last_transaction_price = None
 
     def get_elapsed_time(self) -> float:
         """Returns the elapsed time in seconds since the trader was initialized."""
@@ -137,6 +138,16 @@ class BaseTrader:
             if not data:
                 logger.error('no data from trading system')
                 return
+            price_hint = data.get('transaction_price')
+            if price_hint is None:
+                price_hint = data.get('current_price')
+            if price_hint is not None:
+                try:
+                    numeric_price = float(price_hint)
+                    if numeric_price > 0:
+                        self.last_transaction_price = numeric_price
+                except (TypeError, ValueError):
+                    pass
             order_book = data.get('order_book')
             if order_book is not None:
                 self.order_book = order_book

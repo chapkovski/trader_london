@@ -38,7 +38,11 @@ class TraderManager:
         # So far for debugging purposes we only need one human trader whose id we return to the client
         n_human_traders = params.get("num_human_traders", 1)
         self.noise_traders = [
-            NoiseTrader(max_orders_per_minute=params.get("max_orders_per_minute", 3))
+            NoiseTrader(
+                max_orders_per_minute=params.get("max_orders_per_minute", 3),
+                initial_midpoint=params.get("initial_midpoint", 100),
+                initial_spread=params.get("initial_spread", 10),
+            )
         ]
 
         self.human_traders = [HumanTrader(cash=cash, shares=shares) for _ in range(n_human_traders)]
@@ -59,6 +63,9 @@ class TraderManager:
         for trader_id, trader in self.traders.items():
             await trader.initialize()
             await trader.connect_to_session(trading_session_uuid=self.trading_session.id)
+
+        for trader in self.noise_traders:
+            await trader.seed_initial_orders()
 
         await self.trading_session.send_broadcast({"content": "Market is open"})
 
