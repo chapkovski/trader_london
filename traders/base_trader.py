@@ -193,7 +193,7 @@ class BaseTrader:
         pass
 
     async def post_new_order(self,
-                             amount, price, order_type: OrderType
+                             amount, price, order_type: OrderType, immediate: bool = False
                              ):
         new_order = {
             "action": ActionType.POST_NEW_ORDER.value,
@@ -201,6 +201,8 @@ class BaseTrader:
             "price": price,
             "order_type": order_type,
         }
+        if immediate:
+            new_order["immediate"] = True
         await self.send_to_trading_system(new_order)
         logger.debug(f"Trader {self.id} posted new {order_type} order: {new_order}")
 

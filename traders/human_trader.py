@@ -96,9 +96,10 @@ class HumanTrader(BaseTrader):
 
 
         price = data.get('price')
+        immediate = bool(data.get('immediate', False))
         amount = data.get('amount',
                           1)  # TODO. Philipp. This is a placeholder. We need to get the amount from the client.
-        await self.post_new_order(amount, price, order_type)
+        await self.post_new_order(amount, price, order_type, immediate=immediate)
 
     async def handle_cancel_order(self, data):
         order_uuid = data.get('id')

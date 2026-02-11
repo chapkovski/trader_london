@@ -201,3 +201,57 @@ async def test_clear_orders_partial_fill_updates_remaining_amount():
     assert "subgroup_broadcast" in result
     assert result["subgroup_broadcast"]["ask_trader"][0]["amount"] == 1
     assert result["subgroup_broadcast"]["bid_trader"][0]["amount"] == 1
+
+
+@pytest.mark.asyncio
+async def test_immediate_buy_cascades_and_leaves_remainder_on_bid_side():
+    session = TradingSession(duration=1)
+    session.active = True
+    ask1_id = uuid.uuid4()
+    ask2_id = uuid.uuid4()
+    session.connected_traders = {
+        "buyer": {"trader_type": TraderType.HUMAN.value},
+        "seller_1": {"trader_type": TraderType.HUMAN.value},
+        "seller_2": {"trader_type": TraderType.HUMAN.value},
+    }
+    session.all_orders = {
+        ask1_id: {
+            "id": ask1_id,
+            "trader_id": "seller_1",
+            "order_type": OrderType.ASK.value,
+            "price": 1000,
+            "amount": 1,
+            "timestamp": "2023-04-01T00:00:10Z",
+            "status": OrderStatus.ACTIVE.value,
+        },
+        ask2_id: {
+            "id": ask2_id,
+            "trader_id": "seller_2",
+            "order_type": OrderType.ASK.value,
+            "price": 1200,
+            "amount": 2,
+            "timestamp": "2023-04-01T00:00:11Z",
+            "status": OrderStatus.ACTIVE.value,
+        },
+    }
+
+    await session.handle_add_order(
+        {
+            "trader_id": "buyer",
+            "order_type": OrderType.BID.value,
+            "price": 1000,
+            "amount": 5,
+            "immediate": True,
+        }
+    )
+
+    assert session.all_orders[ask1_id]["status"] == OrderStatus.EXECUTED.value
+    assert session.all_orders[ask2_id]["status"] == OrderStatus.EXECUTED.value
+    buyer_bids = [
+        order
+        for order in session.active_orders.values()
+        if order["trader_id"] == "buyer" and order["order_type"] == OrderType.BID.value
+    ]
+    assert len(buyer_bids) == 1
+    assert buyer_bids[0]["amount"] == 2
+    assert buyer_bids[0]["price"] == 1200

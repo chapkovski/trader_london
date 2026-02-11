@@ -384,6 +384,29 @@ class TradingSession:
             logger.info("No overlapping orders.")
             return None, None
 
+    def _aggressive_price_for_immediate(self, order_type: int, fallback_price):
+        """
+        For immediate execution:
+        - immediate buy gets priced to cross the full current ask side
+        - immediate sell gets priced to cross the full current bid side
+        """
+        asks = [order for order in self.active_orders.values() if order['order_type'] == OrderType.ASK]
+        bids = [order for order in self.active_orders.values() if order['order_type'] == OrderType.BID]
+
+        if int(order_type) == int(OrderType.BID):
+            if asks:
+                return max(order['price'] for order in asks)
+        elif int(order_type) == int(OrderType.ASK):
+            if bids:
+                return min(order['price'] for order in bids)
+
+        if fallback_price is None:
+            return self.default_price
+        try:
+            return max(1, float(fallback_price))
+        except (TypeError, ValueError):
+            return self.default_price
+
     def create_transaction(self, bid, ask, transaction_price):
         # Create a transaction object with automatic id and timestamp generation
         transaction = TransactionModel(
@@ -494,7 +517,13 @@ class TradingSession:
 
         """
 
+        immediate = bool(data.pop('immediate', False))
         data['order_type'] = int(data['order_type'])
+        if immediate:
+            data['price'] = self._aggressive_price_for_immediate(
+                data['order_type'],
+                data.get('price')
+            )
         try:
 
             order = Order(status=OrderStatus.BUFFERED.value,
