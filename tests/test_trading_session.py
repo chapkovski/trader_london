@@ -204,7 +204,7 @@ async def test_clear_orders_partial_fill_updates_remaining_amount():
 
 
 @pytest.mark.asyncio
-async def test_immediate_buy_cascades_and_leaves_remainder_on_bid_side():
+async def test_immediate_buy_ioc_cascades_and_cancels_remainder():
     session = TradingSession(duration=1)
     session.active = True
     ask1_id = uuid.uuid4()
@@ -247,11 +247,12 @@ async def test_immediate_buy_cascades_and_leaves_remainder_on_bid_side():
 
     assert session.all_orders[ask1_id]["status"] == OrderStatus.EXECUTED.value
     assert session.all_orders[ask2_id]["status"] == OrderStatus.EXECUTED.value
-    buyer_bids = [
+    buyer_orders = [
         order
-        for order in session.active_orders.values()
+        for order in session.all_orders.values()
         if order["trader_id"] == "buyer" and order["order_type"] == OrderType.BID.value
     ]
-    assert len(buyer_bids) == 1
-    assert buyer_bids[0]["amount"] == 2
-    assert buyer_bids[0]["price"] == 1200
+    assert len(buyer_orders) == 1
+    assert buyer_orders[0]["status"] == OrderStatus.CANCELLED.value
+    assert buyer_orders[0]["amount"] == 2
+    assert buyer_orders[0]["price"] == 1200

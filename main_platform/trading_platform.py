@@ -519,6 +519,7 @@ class TradingSession:
 
         immediate = bool(data.pop('immediate', False))
         data['order_type'] = int(data['order_type'])
+        placed_order_id = None
         if immediate:
             data['price'] = self._aggressive_price_for_immediate(
                 data['order_type'],
@@ -531,13 +532,19 @@ class TradingSession:
                           **data)
 
             # Place the order
-            self.place_order(order.model_dump())  # Converting order to dict for compatibility
+            placed_order = self.place_order(order.model_dump())  # Converting order to dict for compatibility
+            placed_order_id = placed_order.get('id')
 
         except ValidationError as e:
             # Handle validation errors, e.g., log them or send a message back to the trader
             logger.critical(f"Order validation failed: {e}")
         # lets clear them now
         resp = await self.clear_orders()
+        # IOC semantics: after immediate matching cycle, cancel any remaining quantity.
+        if immediate and placed_order_id and placed_order_id in self.all_orders:
+            if self.all_orders[placed_order_id]['status'] == OrderStatus.ACTIVE.value:
+                self.all_orders[placed_order_id]['status'] = OrderStatus.CANCELLED.value
+                self.all_orders[placed_order_id]['cancellation_timestamp'] = now()
         subgroup_data = resp.pop('subgroup_broadcast', None)
         if subgroup_data:
             await self.send_message_to_subgroup(subgroup_data)
