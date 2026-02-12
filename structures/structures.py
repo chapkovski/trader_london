@@ -67,8 +67,14 @@ class TraderCreationData(BaseModel):
     )
     alert_streak_frequency: int = Field(
         default=3,
-        title="Alert Streak Frequency",
-        description="How many consecutive price moves trigger an alert",
+        title="Alert Count X",
+        description="X moves in the rolling alert window required for an alert",
+        ge=1
+    )
+    alert_window_size: int = Field(
+        default=5,
+        title="Alert Window Y",
+        description="Y recent ticks used for rolling alert checks (X out of Y)",
         ge=1
     )
     allow_self_trade: bool = Field(

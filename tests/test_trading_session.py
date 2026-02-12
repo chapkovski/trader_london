@@ -3,7 +3,7 @@ import asyncio
 import uuid
 from unittest.mock import AsyncMock, patch
 from main_platform import TradingSession
-from structures import OrderStatus, OrderType, TraderType
+from structures import OrderStatus, OrderType, TraderType, Order
 
 
 @pytest.mark.asyncio
@@ -256,3 +256,297 @@ async def test_immediate_buy_ioc_cascades_and_cancels_remainder():
     assert buyer_orders[0]["status"] == OrderStatus.CANCELLED.value
     assert buyer_orders[0]["amount"] == 2
     assert buyer_orders[0]["price"] == 1200
+
+
+@pytest.mark.asyncio
+async def test_matching_respects_cash_and_never_goes_negative():
+    session = TradingSession(duration=1)
+    session.active = True
+    ask_id = uuid.uuid4()
+    session.connected_traders = {
+        "buyer": {"trader_type": TraderType.HUMAN.value, "cash": 150},
+        "seller": {"trader_type": TraderType.HUMAN.value, "cash": 0},
+    }
+    session.all_orders = {
+        ask_id: {
+            "id": ask_id,
+            "trader_id": "seller",
+            "order_type": OrderType.ASK.value,
+            "price": 100,
+            "amount": 3,
+            "timestamp": "2023-04-01T00:00:10Z",
+            "status": OrderStatus.ACTIVE.value,
+        },
+    }
+
+    response = await session.handle_add_order(
+        {
+            "trader_id": "buyer",
+            "order_type": OrderType.BID.value,
+            "price": 100,
+            "amount": 3,
+            "immediate": True,
+        }
+    )
+
+    assert response["status"] == "failed"
+    assert "Insufficient available cash" in response["reason"]
+    assert session.connected_traders["buyer"]["cash"] == 150
+    assert session.connected_traders["buyer"]["cash"] >= 0
+    assert session.all_orders[ask_id]["status"] == OrderStatus.ACTIVE.value
+    assert session.all_orders[ask_id]["amount"] == 3
+
+
+def test_alert_uses_rolling_window_not_consecutive_streak():
+    session = TradingSession(duration=1, alert_streak_frequency=4)
+    transactions = []
+    prices = [100, 101, 100, 101, 102, 103]  # moves: up, down, up, up, up -> 4 ups in last 5
+
+    last_alert = ""
+    for idx, price in enumerate(prices):
+        transactions.append({"price": price, "timestamp": idx})
+        alert, _ = session._build_alert_message(transactions)
+        if alert:
+            last_alert = alert
+
+    assert "went up 4 times in the last 5 ticks" in last_alert
+
+
+@pytest.mark.asyncio
+async def test_noise_order_is_forced_to_unit_amount_and_integer_price():
+    session = TradingSession(duration=1)
+    session.active = True
+    session.connected_traders = {
+        "noise-1": {"trader_type": TraderType.NOISE.value, "cash": 1000, "shares": 100},
+    }
+
+    await session.handle_add_order(
+        {
+            "trader_id": "noise-1",
+            "order_type": OrderType.BID.value,
+            "price": 71.23,
+            "amount": 5,
+        }
+    )
+
+    noise_orders = [
+        order
+        for order in session.all_orders.values()
+        if order["trader_id"] == "noise-1"
+    ]
+    assert len(noise_orders) == 1
+    assert noise_orders[0]["amount"] == 1
+    assert noise_orders[0]["price"] == 71
+
+
+def test_noise_order_is_forced_in_place_order_as_last_safety_net():
+    session = TradingSession(duration=1)
+    session.connected_traders = {
+        "noise-1": {"trader_type": TraderType.NOISE.value, "cash": 1000, "shares": 100},
+    }
+
+    order = Order(
+        status=OrderStatus.BUFFERED.value,
+        session_id=session.id,
+        trader_id="noise-1",
+        order_type=OrderType.BID.value,
+        price=88.9,
+        amount=7,
+    ).model_dump()
+
+    placed = session.place_order(order)
+    assert placed["amount"] == 1
+    assert placed["price"] == 89
+
+
+@pytest.mark.asyncio
+async def test_buy_order_reserves_cash_and_blocks_overcommit():
+    session = TradingSession(duration=1)
+    session.active = True
+    session.connected_traders = {
+        "buyer": {"trader_type": TraderType.HUMAN.value, "cash": 1000, "shares": 0, "reserved_cash": 0},
+    }
+
+    response_1 = await session.handle_add_order(
+        {
+            "trader_id": "buyer",
+            "order_type": OrderType.BID.value,
+            "price": 100,
+            "amount": 7,
+        }
+    )
+    assert response_1.get("status") != "failed"
+    assert session.connected_traders["buyer"]["reserved_cash"] == 700
+
+    response_2 = await session.handle_add_order(
+        {
+            "trader_id": "buyer",
+            "order_type": OrderType.BID.value,
+            "price": 100,
+            "amount": 4,
+        }
+    )
+    assert response_2["status"] == "failed"
+    assert session.connected_traders["buyer"]["reserved_cash"] == 700
+
+
+@pytest.mark.asyncio
+async def test_cancel_buy_order_releases_reserved_cash():
+    session = TradingSession(duration=1)
+    session.active = True
+    session.connected_traders = {
+        "buyer": {"trader_type": TraderType.HUMAN.value, "cash": 1000, "shares": 0, "reserved_cash": 0},
+    }
+
+    response = await session.handle_add_order(
+        {
+            "trader_id": "buyer",
+            "order_type": OrderType.BID.value,
+            "price": 100,
+            "amount": 5,
+        }
+    )
+    assert response.get("status") != "failed"
+    assert session.connected_traders["buyer"]["reserved_cash"] == 500
+
+    bid_order = [
+        order for order in session.all_orders.values()
+        if order["trader_id"] == "buyer" and int(order["order_type"]) == int(OrderType.BID)
+    ][0]
+
+    cancel_response = await session.handle_cancel_order(
+        {"order_id": str(bid_order["id"]), "trader_id": "buyer"}
+    )
+    assert cancel_response["status"] == "cancel success"
+    assert session.connected_traders["buyer"]["reserved_cash"] == 0
+
+
+@pytest.mark.asyncio
+async def test_partial_fill_releases_reserved_cash_for_filled_quantity():
+    session = TradingSession(duration=1)
+    session.active = True
+    ask_id = uuid.uuid4()
+    session.connected_traders = {
+        "buyer": {"trader_type": TraderType.HUMAN.value, "cash": 1000, "shares": 0, "reserved_cash": 0},
+        "seller": {"trader_type": TraderType.HUMAN.value, "cash": 0, "shares": 10, "reserved_cash": 0},
+    }
+    session.all_orders = {
+        ask_id: {
+            "id": ask_id,
+            "trader_id": "seller",
+            "order_type": OrderType.ASK.value,
+            "price": 100,
+            "amount": 2,
+            "timestamp": "2023-04-01T00:00:10Z",
+            "status": OrderStatus.ACTIVE.value,
+        },
+    }
+
+    response = await session.handle_add_order(
+        {
+            "trader_id": "buyer",
+            "order_type": OrderType.BID.value,
+            "price": 120,
+            "amount": 5,
+        }
+    )
+    assert response.get("status") != "failed"
+    # Reserved at entry: 5 * 120 = 600; filled 2 shares -> release 2 * 120 = 240.
+    assert session.connected_traders["buyer"]["reserved_cash"] == 360
+
+
+@pytest.mark.asyncio
+async def test_sell_order_reserves_shares_and_blocks_oversell():
+    session = TradingSession(duration=1)
+    session.active = True
+    session.connected_traders = {
+        "seller": {"trader_type": TraderType.HUMAN.value, "cash": 1000, "shares": 5, "reserved_shares": 0},
+    }
+
+    response_1 = await session.handle_add_order(
+        {
+            "trader_id": "seller",
+            "order_type": OrderType.ASK.value,
+            "price": 100,
+            "amount": 4,
+        }
+    )
+    assert response_1.get("status") != "failed"
+    assert session.connected_traders["seller"]["reserved_shares"] == 4
+
+    response_2 = await session.handle_add_order(
+        {
+            "trader_id": "seller",
+            "order_type": OrderType.ASK.value,
+            "price": 110,
+            "amount": 2,
+        }
+    )
+    assert response_2["status"] == "failed"
+    assert "Insufficient available shares" in response_2["reason"]
+    assert session.connected_traders["seller"]["reserved_shares"] == 4
+
+
+@pytest.mark.asyncio
+async def test_cancel_sell_order_releases_reserved_shares():
+    session = TradingSession(duration=1)
+    session.active = True
+    session.connected_traders = {
+        "seller": {"trader_type": TraderType.HUMAN.value, "cash": 1000, "shares": 5, "reserved_shares": 0},
+    }
+
+    response = await session.handle_add_order(
+        {
+            "trader_id": "seller",
+            "order_type": OrderType.ASK.value,
+            "price": 100,
+            "amount": 4,
+        }
+    )
+    assert response.get("status") != "failed"
+    assert session.connected_traders["seller"]["reserved_shares"] == 4
+
+    ask_order = [
+        order for order in session.all_orders.values()
+        if order["trader_id"] == "seller" and int(order["order_type"]) == int(OrderType.ASK)
+    ][0]
+
+    cancel_response = await session.handle_cancel_order(
+        {"order_id": str(ask_order["id"]), "trader_id": "seller"}
+    )
+    assert cancel_response["status"] == "cancel success"
+    assert session.connected_traders["seller"]["reserved_shares"] == 0
+
+
+@pytest.mark.asyncio
+async def test_partial_fill_releases_reserved_shares_for_filled_quantity():
+    session = TradingSession(duration=1)
+    session.active = True
+    bid_id = uuid.uuid4()
+    session.connected_traders = {
+        "seller": {"trader_type": TraderType.HUMAN.value, "cash": 0, "shares": 5, "reserved_shares": 0},
+        "buyer": {"trader_type": TraderType.HUMAN.value, "cash": 1000, "shares": 0, "reserved_cash": 0},
+    }
+    session.all_orders = {
+        bid_id: {
+            "id": bid_id,
+            "trader_id": "buyer",
+            "order_type": OrderType.BID.value,
+            "price": 120,
+            "amount": 2,
+            "timestamp": "2023-04-01T00:00:10Z",
+            "status": OrderStatus.ACTIVE.value,
+        },
+    }
+
+    response = await session.handle_add_order(
+        {
+            "trader_id": "seller",
+            "order_type": OrderType.ASK.value,
+            "price": 100,
+            "amount": 5,
+        }
+    )
+    assert response.get("status") != "failed"
+    # Reserved at entry: 5; filled 2 shares -> release 2.
+    assert session.connected_traders["seller"]["reserved_shares"] == 3

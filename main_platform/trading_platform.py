@@ -12,6 +12,7 @@ from asyncio import Lock
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 import random
+import math
 
 logger = setup_custom_logger(__name__)
 
@@ -44,12 +45,20 @@ class TradingSession:
     transactions = List[TransactionModel]
     all_orders = Dict[uuid.UUID, Dict]
 
-    def __init__(self, duration, default_price=1000, alert_streak_frequency=4, allow_self_trade=False):
+    def __init__(
+        self,
+        duration,
+        default_price=1000,
+        alert_streak_frequency=4,
+        alert_window_size=5,
+        allow_self_trade=False,
+    ):
         self.active = False
         self.mongo_enabled = MONGO_ENABLED
         self.duration = duration
         self.default_price = default_price
         self.alert_streak_frequency = max(1, int(alert_streak_frequency or 1))
+        self.alert_window_size = max(1, int(alert_window_size or 5))
         self.allow_self_trade = bool(allow_self_trade)
 
         self._stop_requested = asyncio.Event()
@@ -64,14 +73,16 @@ class TradingSession:
         self.trader_exchange = None
 
         self.connected_traders = {}
+        self.trader_transaction_counts = defaultdict(int)
         self.lock = Lock()
         self.current_price = 0  # handling non-defined attribute
         self._transactions_mem = []  # fallback when Mongo is disabled
         self._last_broadcast_price = None
         self._last_seen_price = None
         self._last_seen_transaction_key = None
-        self._alert_streak_dir = None
-        self._alert_streak_count = 0
+        self._alert_window_size = self.alert_window_size
+        self._recent_price_moves = []
+        self._last_alert_signature = None
         self._dividend_announced = False
 
     @staticmethod
@@ -106,25 +117,34 @@ class TradingSession:
             return "", latest_price
 
         if latest_price > prev_price:
-            direction = "up"
+            move = "up"
         elif latest_price < prev_price:
-            direction = "down"
+            move = "down"
         else:
-            self._alert_streak_dir = None
-            self._alert_streak_count = 0
-            return "", latest_price
+            move = "flat"
 
-        if direction == self._alert_streak_dir:
-            self._alert_streak_count += 1
-        else:
-            self._alert_streak_dir = direction
-            self._alert_streak_count = 1
+        self._recent_price_moves.append(move)
+        if len(self._recent_price_moves) > self._alert_window_size:
+            self._recent_price_moves = self._recent_price_moves[-self._alert_window_size:]
 
-        if self._alert_streak_count % self.alert_streak_frequency == 0:
-            return (
-                f"Price goes {direction} {self._alert_streak_count} times in a row!",
-                latest_price,
-            )
+        up_count = sum(1 for item in self._recent_price_moves if item == "up")
+        down_count = sum(1 for item in self._recent_price_moves if item == "down")
+        window_size = len(self._recent_price_moves)
+        threshold = self.alert_streak_frequency
+
+        candidate = None
+        if up_count >= threshold and up_count > down_count:
+            candidate = ("up", up_count, window_size)
+        elif down_count >= threshold and down_count > up_count:
+            candidate = ("down", down_count, window_size)
+
+        if candidate and candidate != self._last_alert_signature:
+            self._last_alert_signature = candidate
+            direction, count, size = candidate
+            return (f"Price went {direction} {count} times in the last {size} ticks!", latest_price)
+
+        if not candidate:
+            self._last_alert_signature = None
         return "", latest_price
 
     @property
@@ -322,6 +342,11 @@ class TradingSession:
             'active_orders': self.get_active_orders_to_broadcast(),
             'trader_orders': self.get_orders_for_trader(trader_id),
             'transaction_history': transactions,
+            'transaction_count': int(self.trader_transaction_counts.get(trader_id, 0)),
+            'reserved_cash': self._reserved_cash_for_trader(trader_id),
+            'available_cash': self._available_cash_for_trader(trader_id),
+            'reserved_shares': self._reserved_shares_for_trader(trader_id),
+            'available_shares': self._available_shares_for_trader(trader_id),
             'spread': spread,
             'mid_price': mid_price,
 
@@ -354,6 +379,16 @@ class TradingSession:
         It doesn't make much sense to decouple handle_add_order with the actualy place_order now, but theoretically
         we may need this later if we want more speed for some traders that will be merged into trading platform (if the rabbitMQ solution won't be fast enough for simluation purposes).
         """
+        trader_id = order_dict.get('trader_id')
+        trader_meta = self.connected_traders.get(trader_id, {})
+        if trader_meta.get('trader_type') == TraderType.NOISE.value:
+            # Final write-time safety net for any future/bypassed submit path.
+            order_dict['amount'] = 1
+            try:
+                order_dict['price'] = max(1, int(round(float(order_dict.get('price', self.default_price)))))
+            except (TypeError, ValueError):
+                order_dict['price'] = max(1, int(round(float(self.default_price))))
+
         order_id = order_dict['id']
         order_dict.update({
             'status': OrderStatus.ACTIVE.value,
@@ -445,6 +480,149 @@ class TradingSession:
             order['amount'] = remaining
             order['status'] = OrderStatus.ACTIVE.value
 
+    def _cash_for_trader(self, trader_id):
+        trader_data = self.connected_traders.get(trader_id, {})
+        cash = trader_data.get('cash')
+        if cash is None:
+            return None
+        try:
+            return float(cash)
+        except (TypeError, ValueError):
+            return None
+
+    def _reserved_cash_for_trader(self, trader_id):
+        trader_data = self.connected_traders.get(trader_id, {})
+        reserved_cash = trader_data.get('reserved_cash', 0)
+        try:
+            return max(0.0, float(reserved_cash))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _shares_for_trader(self, trader_id):
+        trader_data = self.connected_traders.get(trader_id, {})
+        shares = trader_data.get('shares')
+        if shares is None:
+            return None
+        try:
+            return float(shares)
+        except (TypeError, ValueError):
+            return None
+
+    def _reserved_shares_for_trader(self, trader_id):
+        trader_data = self.connected_traders.get(trader_id, {})
+        reserved_shares = trader_data.get('reserved_shares', 0)
+        try:
+            return max(0.0, float(reserved_shares))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _available_cash_for_trader(self, trader_id):
+        cash = self._cash_for_trader(trader_id)
+        if cash is None:
+            return None
+        return max(0.0, cash - self._reserved_cash_for_trader(trader_id))
+
+    def _available_shares_for_trader(self, trader_id):
+        shares = self._shares_for_trader(trader_id)
+        if shares is None:
+            return None
+        return max(0.0, shares - self._reserved_shares_for_trader(trader_id))
+
+    def _reserve_cash_for_bid(self, trader_id, price, amount):
+        """
+        Reserve cash for a bid order at placement time.
+        Returns (ok, reserved_amount).
+        """
+        trader_data = self.connected_traders.get(trader_id)
+        if trader_data is None:
+            return True, 0.0
+
+        available_cash = self._available_cash_for_trader(trader_id)
+        if available_cash is None:
+            return True, 0.0
+        try:
+            reserve_amount = max(0.0, float(price) * float(amount))
+        except (TypeError, ValueError):
+            return False, 0.0
+        if reserve_amount > (available_cash + 1e-9):
+            return False, reserve_amount
+
+        trader_data['reserved_cash'] = self._reserved_cash_for_trader(trader_id) + reserve_amount
+        return True, reserve_amount
+
+    def _release_reserved_cash(self, trader_id, amount):
+        trader_data = self.connected_traders.get(trader_id)
+        if trader_data is None:
+            return
+        try:
+            release_amount = max(0.0, float(amount))
+        except (TypeError, ValueError):
+            return
+        current_reserved = self._reserved_cash_for_trader(trader_id)
+        trader_data['reserved_cash'] = max(0.0, current_reserved - release_amount)
+
+    def _reserve_shares_for_ask(self, trader_id, amount):
+        """
+        Reserve shares for an ask order at placement time.
+        Returns (ok, reserved_amount).
+        """
+        trader_data = self.connected_traders.get(trader_id)
+        if trader_data is None:
+            return True, 0.0
+
+        available_shares = self._available_shares_for_trader(trader_id)
+        if available_shares is None:
+            return True, 0.0
+        try:
+            reserve_amount = max(0.0, float(amount))
+        except (TypeError, ValueError):
+            return False, 0.0
+        if reserve_amount > (available_shares + 1e-9):
+            return False, reserve_amount
+
+        trader_data['reserved_shares'] = self._reserved_shares_for_trader(trader_id) + reserve_amount
+        return True, reserve_amount
+
+    def _release_reserved_shares(self, trader_id, amount):
+        trader_data = self.connected_traders.get(trader_id)
+        if trader_data is None:
+            return
+        try:
+            release_amount = max(0.0, float(amount))
+        except (TypeError, ValueError):
+            return
+        current_reserved = self._reserved_shares_for_trader(trader_id)
+        trader_data['reserved_shares'] = max(0.0, current_reserved - release_amount)
+
+    def _apply_share_flows(self, bid_trader_id, ask_trader_id, transaction_amount):
+        buyer = self.connected_traders.get(bid_trader_id)
+        seller = self.connected_traders.get(ask_trader_id)
+        if buyer is not None and buyer.get('shares') is not None:
+            try:
+                buyer['shares'] = float(buyer['shares']) + float(transaction_amount)
+            except (TypeError, ValueError):
+                buyer['shares'] = float(transaction_amount)
+        if seller is not None and seller.get('shares') is not None:
+            try:
+                seller['shares'] = max(0.0, float(seller['shares']) - float(transaction_amount))
+            except (TypeError, ValueError):
+                seller['shares'] = 0.0
+
+    def _apply_cash_flows(self, bid_trader_id, ask_trader_id, transaction_price, transaction_amount):
+        trade_value = float(transaction_price) * float(transaction_amount)
+        buyer = self.connected_traders.get(bid_trader_id)
+        seller = self.connected_traders.get(ask_trader_id)
+        if buyer is not None and buyer.get('cash') is not None:
+            try:
+                buyer['cash'] = max(0.0, float(buyer['cash']) - trade_value)
+            except (TypeError, ValueError):
+                buyer['cash'] = 0.0
+        if seller is not None and seller.get('cash') is not None:
+            try:
+                seller['cash'] = float(seller['cash']) + trade_value
+            except (TypeError, ValueError):
+                seller['cash'] = trade_value
+
     async def clear_orders(self):
         """ this goes through order book trying to execute orders """
         # Keep a summary of matches for targeted updates back to traders.
@@ -480,9 +658,42 @@ class TradingSession:
             if (not self.allow_self_trade) and ask_trader_type == TraderType.HUMAN.value and ask_trader_id == bid_trader_id:
                 logger.warning(f'Blocking self-execution for trader {ask_trader_id}')
                 break
+
+            # Guarantee non-negative cash by limiting buy fills to affordable amount.
+            buyer_cash = self._cash_for_trader(bid_trader_id)
+            if buyer_cash is not None and transaction_price > 0:
+                max_affordable = math.floor(buyer_cash / float(transaction_price))
+                if max_affordable <= 0:
+                    self._release_reserved_cash(
+                        bid_trader_id,
+                        float(bid.get('price', 0)) * float(bid.get('amount', 0))
+                    )
+                    self.all_orders[bid['id']]['status'] = OrderStatus.CANCELLED.value
+                    self.all_orders[bid['id']]['cancellation_timestamp'] = now()
+                    bids.pop(0)
+                    continue
+                transaction_amount = min(transaction_amount, float(max_affordable))
+                if transaction_amount <= 0:
+                    bids.pop(0)
+                    continue
+
             _, _, transaction = self.create_transaction(bid, ask, transaction_price)
+            # Release reserved cash for the filled bid quantity at the bid limit price.
+            self._release_reserved_cash(
+                bid_trader_id,
+                float(bid.get('price', 0)) * float(transaction_amount),
+            )
+            # Release reserved shares for the filled ask quantity.
+            self._release_reserved_shares(
+                ask_trader_id,
+                float(transaction_amount),
+            )
             self._apply_fill(ask['id'], transaction_amount)
             self._apply_fill(bid['id'], transaction_amount)
+            self._apply_cash_flows(bid_trader_id, ask_trader_id, transaction_price, transaction_amount)
+            self._apply_share_flows(bid_trader_id, ask_trader_id, transaction_amount)
+            self.trader_transaction_counts[ask_trader_id] += 1
+            self.trader_transaction_counts[bid_trader_id] += 1
 
             # No need to append the transaction to self.transactions here as it's handled within create_transaction
 
@@ -519,7 +730,23 @@ class TradingSession:
 
         immediate = bool(data.pop('immediate', False))
         data['order_type'] = int(data['order_type'])
+        trader_id = data.get('trader_id')
+        trader_meta = self.connected_traders.get(trader_id, {})
+        trader_type = trader_meta.get('trader_type')
+
+        # Hard safety rule: all noise-trader orders are unit-size and integer-priced.
+        if trader_type == TraderType.NOISE.value:
+            data['amount'] = 1
+            try:
+                data['price'] = max(1, int(round(float(data.get('price', self.default_price)))))
+            except (TypeError, ValueError):
+                data['price'] = max(1, int(round(float(self.default_price))))
+
         placed_order_id = None
+        reserved_cash_amount = 0.0
+        reserved_cash_trader_id = None
+        reserved_shares_amount = 0.0
+        reserved_shares_trader_id = None
         if immediate:
             data['price'] = self._aggressive_price_for_immediate(
                 data['order_type'],
@@ -531,6 +758,32 @@ class TradingSession:
                           session_id=self.id,
                           **data)
 
+            if int(order.order_type) == int(OrderType.BID):
+                ok, reserved_cash_amount = self._reserve_cash_for_bid(
+                    order.trader_id,
+                    order.price,
+                    order.amount,
+                )
+                if not ok:
+                    return dict(
+                        respond=True,
+                        status="failed",
+                        reason="Insufficient available cash for buy order",
+                    )
+                reserved_cash_trader_id = order.trader_id
+            elif int(order.order_type) == int(OrderType.ASK):
+                ok, reserved_shares_amount = self._reserve_shares_for_ask(
+                    order.trader_id,
+                    order.amount,
+                )
+                if not ok:
+                    return dict(
+                        respond=True,
+                        status="failed",
+                        reason="Insufficient available shares for sell order",
+                    )
+                reserved_shares_trader_id = order.trader_id
+
             # Place the order
             placed_order = self.place_order(order.model_dump())  # Converting order to dict for compatibility
             placed_order_id = placed_order.get('id')
@@ -538,11 +791,33 @@ class TradingSession:
         except ValidationError as e:
             # Handle validation errors, e.g., log them or send a message back to the trader
             logger.critical(f"Order validation failed: {e}")
+            if reserved_cash_trader_id and reserved_cash_amount > 0:
+                self._release_reserved_cash(reserved_cash_trader_id, reserved_cash_amount)
+            if reserved_shares_trader_id and reserved_shares_amount > 0:
+                self._release_reserved_shares(reserved_shares_trader_id, reserved_shares_amount)
+            return dict(respond=True, status="failed", reason="Order validation failed")
+        except Exception:
+            if reserved_cash_trader_id and reserved_cash_amount > 0:
+                self._release_reserved_cash(reserved_cash_trader_id, reserved_cash_amount)
+            if reserved_shares_trader_id and reserved_shares_amount > 0:
+                self._release_reserved_shares(reserved_shares_trader_id, reserved_shares_amount)
+            raise
         # lets clear them now
         resp = await self.clear_orders()
         # IOC semantics: after immediate matching cycle, cancel any remaining quantity.
         if immediate and placed_order_id and placed_order_id in self.all_orders:
             if self.all_orders[placed_order_id]['status'] == OrderStatus.ACTIVE.value:
+                if int(self.all_orders[placed_order_id].get('order_type')) == int(OrderType.BID):
+                    self._release_reserved_cash(
+                        self.all_orders[placed_order_id].get('trader_id'),
+                        float(self.all_orders[placed_order_id].get('price', 0))
+                        * float(self.all_orders[placed_order_id].get('amount', 0))
+                    )
+                elif int(self.all_orders[placed_order_id].get('order_type')) == int(OrderType.ASK):
+                    self._release_reserved_shares(
+                        self.all_orders[placed_order_id].get('trader_id'),
+                        float(self.all_orders[placed_order_id].get('amount', 0)),
+                    )
                 self.all_orders[placed_order_id]['status'] = OrderStatus.CANCELLED.value
                 self.all_orders[placed_order_id]['cancellation_timestamp'] = now()
         subgroup_data = resp.pop('subgroup_broadcast', None)
@@ -582,6 +857,16 @@ class TradingSession:
                 return {"status": "failed", "reason": "Order is not active"}
 
             # Cancel the order
+            if int(existing_order.get('order_type')) == int(OrderType.BID):
+                self._release_reserved_cash(
+                    trader_id,
+                    float(existing_order.get('price', 0)) * float(existing_order.get('amount', 0)),
+                )
+            elif int(existing_order.get('order_type')) == int(OrderType.ASK):
+                self._release_reserved_shares(
+                    trader_id,
+                    float(existing_order.get('amount', 0)),
+                )
             self.all_orders[order_id]['status'] = OrderStatus.CANCELLED.value
             self.all_orders[order_id]['cancellation_timestamp'] = now()
 
@@ -591,7 +876,15 @@ class TradingSession:
     async def handle_register_me(self, msg_body):
         trader_id = msg_body.get('trader_id')
         trader_type = msg_body.get('trader_type')
-        self.connected_traders[trader_id] = {'trader_type': trader_type, }
+        cash = msg_body.get('cash')
+        shares = msg_body.get('shares')
+        self.connected_traders[trader_id] = {
+            'trader_type': trader_type,
+            'cash': cash,
+            'shares': shares,
+            'reserved_cash': 0.0,
+            'reserved_shares': 0.0,
+        }
 
         logger.info(f"Trader type  {trader_type} id {trader_id} connected.")
         logger.info(f"Total connected traders: {len(self.connected_traders)}")

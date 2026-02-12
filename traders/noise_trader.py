@@ -14,11 +14,13 @@ class NoiseTrader(BaseTrader):
         max_orders_per_minute: int,
         initial_midpoint: float = 100,
         initial_spread: float = 10,
+        cash: float = 0,
+        shares: float = 0,
     ):
         """
         Single noise trader that submits random order types against the human book.
         """
-        super().__init__(trader_type=TraderType.NOISE)
+        super().__init__(trader_type=TraderType.NOISE, cash=cash, shares=shares)
         self.max_orders_per_minute = max(0, int(max_orders_per_minute or 0))
         self.initial_midpoint = float(initial_midpoint)
         self.initial_spread = max(0.0001, float(initial_spread or 10))
@@ -26,14 +28,14 @@ class NoiseTrader(BaseTrader):
 
     @staticmethod
     def _positive_price(price):
-        return max(1, float(price))
+        return max(1, int(round(float(price))))
 
     def _quotes_around(self, anchor_price: float):
         half_spread = self.initial_spread / 2.0
         bid_price = self._positive_price(anchor_price - half_spread)
         ask_price = self._positive_price(anchor_price + half_spread)
         if ask_price <= bid_price:
-            ask_price = bid_price + self.initial_spread
+            ask_price = bid_price + max(1, int(round(self.initial_spread)))
         return bid_price, ask_price
 
     def _reference_price(self):
@@ -92,8 +94,8 @@ class NoiseTrader(BaseTrader):
         Equally likely actions:
         - market buy
         - market sell
-        - limit buy (2 * spread below best bid)
-        - limit sell (2 * spread above best ask)
+        - limit buy (randomly up to 0.5 * spread below best bid)
+        - limit sell (randomly up to 0.5 * spread above best ask)
         """
         best_bid, best_ask = self._get_best_quotes()
 
@@ -119,14 +121,16 @@ class NoiseTrader(BaseTrader):
             return
 
         action = random.choice(["market_buy", "market_sell", "limit_buy", "limit_sell"])
+        half_spread = spread * 0.5
+        limit_offset = random.uniform(0, half_spread)
         if action == "market_buy":
             await self.post_new_order(1, best_ask, OrderType.BID)
         elif action == "market_sell":
             await self.post_new_order(1, best_bid, OrderType.ASK)
         elif action == "limit_buy":
-            await self.post_new_order(1, self._positive_price(best_bid - (2 * spread)), OrderType.BID)
+            await self.post_new_order(1, self._positive_price(best_bid - limit_offset), OrderType.BID)
         else:
-            await self.post_new_order(1, best_ask + (2 * spread), OrderType.ASK)
+            await self.post_new_order(1, self._positive_price(best_ask + limit_offset), OrderType.ASK)
 
     async def _sleep_or_stop(self, seconds: float) -> bool:
         """

@@ -77,12 +77,24 @@ async def test_act_market_buy(noise_trader):
 
 
 @pytest.mark.asyncio
-async def test_act_limit_sell_uses_double_spread_distance(noise_trader):
+async def test_act_limit_sell_uses_random_offset_within_half_spread(noise_trader):
     noise_trader.active_orders = [
         {"trader_id": "human-bid", "order_type": OrderType.BID, "price": 1000},
         {"trader_id": "human-ask", "order_type": OrderType.ASK, "price": 1100},
     ]
     noise_trader.post_new_order = AsyncMock()
-    with patch("random.choice", return_value="limit_sell"):
+    with patch("random.choice", return_value="limit_sell"), patch("random.uniform", return_value=17.0):
         await noise_trader.act()
-    noise_trader.post_new_order.assert_awaited_once_with(1, 1300, OrderType.ASK)
+    noise_trader.post_new_order.assert_awaited_once_with(1, 1117, OrderType.ASK)
+
+
+@pytest.mark.asyncio
+async def test_act_limit_buy_uses_random_offset_within_half_spread(noise_trader):
+    noise_trader.active_orders = [
+        {"trader_id": "human-bid", "order_type": OrderType.BID, "price": 1000},
+        {"trader_id": "human-ask", "order_type": OrderType.ASK, "price": 1100},
+    ]
+    noise_trader.post_new_order = AsyncMock()
+    with patch("random.choice", return_value="limit_buy"), patch("random.uniform", return_value=17.0):
+        await noise_trader.act()
+    noise_trader.post_new_order.assert_awaited_once_with(1, 983, OrderType.BID)

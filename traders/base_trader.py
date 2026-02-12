@@ -108,7 +108,9 @@ class BaseTrader:
         message = {
             'type': ActionType.REGISTER.value,
             'action': ActionType.REGISTER.value,
-            'trader_type': self.trader_type
+            'trader_type': self.trader_type,
+            'cash': self.cash,
+            'shares': self.shares,
         }
 
         await self.send_to_trading_system(message)
@@ -183,6 +185,9 @@ class BaseTrader:
             else:
                 self.shares += transaction['amount']
                 self.cash -= transaction['price'] * transaction['amount']
+        if self.cash < 0:
+            logger.error(f"Trader {self.id} cash dropped below zero; clamping to zero.")
+            self.cash = 0
         if self.trader_type == TraderType.HUMAN.value:
             logger.info(f"Trader {self.id} updated inventory: shares: {self.shares}, cash: {self.cash}")
 

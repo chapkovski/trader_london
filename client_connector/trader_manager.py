@@ -42,6 +42,8 @@ class TraderManager:
                 max_orders_per_minute=params.get("max_orders_per_minute", 3),
                 initial_midpoint=params.get("initial_midpoint", 100),
                 initial_spread=params.get("initial_spread", 10),
+                cash=cash,
+                shares=shares,
             )
         ]
 
@@ -51,7 +53,8 @@ class TraderManager:
         self.trading_session = TradingSession(
             duration=params['trading_day_duration'],
             alert_streak_frequency=params.get("alert_streak_frequency", 4),
-            allow_self_trade=params.get("allow_self_trade", False),
+            alert_window_size=params.get("alert_window_size", 5),
+            allow_self_trade=True,
         )
 
 
