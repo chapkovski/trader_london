@@ -601,7 +601,7 @@ class TradingSession:
         except (TypeError, ValueError):
             return self.default_price
 
-    def create_transaction(self, bid, ask, transaction_price):
+    def create_transaction(self, bid, ask, transaction_price, transaction_amount=None):
         transaction = {
             "id": str(uuid.uuid4()),
             "trading_session_id": str(self.id),
@@ -609,6 +609,7 @@ class TradingSession:
             "ask_order_id": str(ask.get("id") or ""),
             "timestamp": now(),
             "price": float(transaction_price),
+            "quantity": float(transaction_amount or 0),
             "bid_trader_uuid": str(bid.get("trader_id") or ""),
             "ask_trader_uuid": str(ask.get("trader_id") or ""),
         }
@@ -856,7 +857,7 @@ class TradingSession:
                     bids.pop(0)
                     continue
 
-            _, _, transaction = self.create_transaction(bid, ask, transaction_price)
+            _, _, transaction = self.create_transaction(bid, ask, transaction_price, transaction_amount)
             # Release reserved cash for the filled bid quantity at the bid limit price.
             self._release_reserved_cash(
                 bid_trader_id,
