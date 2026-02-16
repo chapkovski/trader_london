@@ -132,3 +132,230 @@
 [31m2026-02-16 14:31:14,709 - traders.base_trader - CRITICAL - Trader c0b9ff4d-552c-446d-a5a7-07de907c8730: type: HUMAN. Closure signal received. Preparing to stop trading activities.[0m
 [36m2026-02-16 14:31:14,727 - traders.base_trader - INFO - Trader c0b9ff4d-552c-446d-a5a7-07de907c8730 channel closed[0m
 [36m2026-02-16 14:31:14,734 - traders.base_trader - INFO - Trader 2fe060bc-dcde-42e9-be6a-c8c91b9cdb82 channel closed[0m
+[36m2026-02-16 19:17:32,076 - traders.base_trader - INFO - Trader of type NOISE created with UUID: 7ca9d0a9-b306-425a-80c9-91321cafa41b[0m
+[36m2026-02-16 19:17:32,076 - traders.base_trader - INFO - Trader queue name: trader_7ca9d0a9-b306-425a-80c9-91321cafa41b[0m
+[36m2026-02-16 19:17:32,076 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 63edd6be-50e6-436c-b54b-4f26455a419a[0m
+[36m2026-02-16 19:17:32,076 - traders.base_trader - INFO - Trader queue name: trader_63edd6be-50e6-436c-b54b-4f26455a419a[0m
+[36m2026-02-16 19:17:32,076 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: ab152ad2-007e-4f0b-a5a6-c95b3c70c274[0m
+[36m2026-02-16 19:17:32,076 - traders.base_trader - INFO - Trader queue name: trader_ab152ad2-007e-4f0b-a5a6-c95b3c70c274[0m
+[36m2026-02-16 19:17:32,076 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 76dd5de7-8e98-4063-9da9-a2637e2ddede[0m
+[36m2026-02-16 19:17:32,076 - traders.base_trader - INFO - Trader queue name: trader_76dd5de7-8e98-4063-9da9-a2637e2ddede[0m
+[36m2026-02-16 19:17:32,076 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 731b8039-9958-4cd9-842e-f16b5662f4fa[0m
+[36m2026-02-16 19:17:32,076 - traders.base_trader - INFO - Trader queue name: trader_731b8039-9958-4cd9-842e-f16b5662f4fa[0m
+[36m2026-02-16 19:17:32,198 - traders.base_trader - INFO - trader 63edd6be-50e6-436c-b54b-4f26455a419a is waiting[0m
+[36m2026-02-16 19:17:32,198 - traders.base_trader - INFO - trader ab152ad2-007e-4f0b-a5a6-c95b3c70c274 is waiting[0m
+[36m2026-02-16 19:17:32,198 - traders.base_trader - INFO - trader 76dd5de7-8e98-4063-9da9-a2637e2ddede is waiting[0m
+[36m2026-02-16 19:17:32,198 - traders.base_trader - INFO - trader 731b8039-9958-4cd9-842e-f16b5662f4fa is waiting[0m
+[36m2026-02-16 19:19:59,394 - traders.base_trader - INFO - Trader 7ca9d0a9-b306-425a-80c9-91321cafa41b channel closed[0m
+[36m2026-02-16 19:19:59,394 - traders.base_trader - INFO - Trader 7ca9d0a9-b306-425a-80c9-91321cafa41b connection closed[0m
+[36m2026-02-16 19:30:00,847 - traders.base_trader - INFO - Trader of type NOISE created with UUID: 807f563f-824e-41a3-8537-b743e10a46c6[0m
+[36m2026-02-16 19:30:00,848 - traders.base_trader - INFO - Trader queue name: trader_807f563f-824e-41a3-8537-b743e10a46c6[0m
+[36m2026-02-16 19:30:00,848 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 78215cda-ff47-49a2-83eb-9e935911d787[0m
+[36m2026-02-16 19:30:00,848 - traders.base_trader - INFO - Trader queue name: trader_78215cda-ff47-49a2-83eb-9e935911d787[0m
+[36m2026-02-16 19:30:00,848 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: eb4d5e70-226e-4315-8855-f8fb5536c857[0m
+[36m2026-02-16 19:30:00,848 - traders.base_trader - INFO - Trader queue name: trader_eb4d5e70-226e-4315-8855-f8fb5536c857[0m
+[36m2026-02-16 19:30:00,848 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: ef0eef94-1823-4b86-8f3a-759dea325f73[0m
+[36m2026-02-16 19:30:00,848 - traders.base_trader - INFO - Trader queue name: trader_ef0eef94-1823-4b86-8f3a-759dea325f73[0m
+[36m2026-02-16 19:30:00,848 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 89ea70fb-927f-4e33-9aab-4e65f7398619[0m
+[36m2026-02-16 19:30:00,848 - traders.base_trader - INFO - Trader queue name: trader_89ea70fb-927f-4e33-9aab-4e65f7398619[0m
+[36m2026-02-16 19:30:00,987 - traders.base_trader - INFO - trader 78215cda-ff47-49a2-83eb-9e935911d787 is waiting[0m
+[36m2026-02-16 19:30:00,987 - traders.base_trader - INFO - trader eb4d5e70-226e-4315-8855-f8fb5536c857 is waiting[0m
+[36m2026-02-16 19:30:00,987 - traders.base_trader - INFO - trader ef0eef94-1823-4b86-8f3a-759dea325f73 is waiting[0m
+[36m2026-02-16 19:30:00,987 - traders.base_trader - INFO - trader 89ea70fb-927f-4e33-9aab-4e65f7398619 is waiting[0m
+[31m2026-02-16 19:35:01,354 - traders.base_trader - CRITICAL - Trader 807f563f-824e-41a3-8537-b743e10a46c6: type: NOISE. Closure signal received. Preparing to stop trading activities.[0m
+[31m2026-02-16 19:35:01,355 - traders.base_trader - CRITICAL - Trader 89ea70fb-927f-4e33-9aab-4e65f7398619: type: HUMAN. Closure signal received. Preparing to stop trading activities.[0m
+[31m2026-02-16 19:35:01,357 - traders.base_trader - CRITICAL - Trader eb4d5e70-226e-4315-8855-f8fb5536c857: type: HUMAN. Closure signal received. Preparing to stop trading activities.[0m
+[31m2026-02-16 19:35:01,361 - traders.base_trader - CRITICAL - Trader ef0eef94-1823-4b86-8f3a-759dea325f73: type: HUMAN. Closure signal received. Preparing to stop trading activities.[0m
+[31m2026-02-16 19:35:01,362 - traders.base_trader - CRITICAL - Trader 78215cda-ff47-49a2-83eb-9e935911d787: type: HUMAN. Closure signal received. Preparing to stop trading activities.[0m
+[36m2026-02-16 19:35:01,390 - traders.base_trader - INFO - Trader 89ea70fb-927f-4e33-9aab-4e65f7398619 channel closed[0m
+[36m2026-02-16 19:35:01,426 - traders.base_trader - INFO - Trader 807f563f-824e-41a3-8537-b743e10a46c6 channel closed[0m
+[36m2026-02-16 19:35:01,435 - traders.base_trader - INFO - Trader eb4d5e70-226e-4315-8855-f8fb5536c857 channel closed[0m
+[36m2026-02-16 19:35:01,442 - traders.base_trader - INFO - Trader 78215cda-ff47-49a2-83eb-9e935911d787 channel closed[0m
+[36m2026-02-16 19:35:01,444 - traders.base_trader - INFO - Trader ef0eef94-1823-4b86-8f3a-759dea325f73 channel closed[0m
+[36m2026-02-16 19:42:35,865 - traders.base_trader - INFO - Trader of type NOISE created with UUID: 3e8b563d-ff8b-4c5d-aaf1-5a688f0b408e[0m
+[36m2026-02-16 19:42:35,866 - traders.base_trader - INFO - Trader queue name: trader_3e8b563d-ff8b-4c5d-aaf1-5a688f0b408e[0m
+[36m2026-02-16 19:42:35,866 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 6f4538b5-c6de-4895-9fec-7f66bfbf516e[0m
+[36m2026-02-16 19:42:35,866 - traders.base_trader - INFO - Trader queue name: trader_6f4538b5-c6de-4895-9fec-7f66bfbf516e[0m
+[36m2026-02-16 19:42:35,866 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: ae0bed5d-9664-44c8-b728-7a0c2c6665e3[0m
+[36m2026-02-16 19:42:35,866 - traders.base_trader - INFO - Trader queue name: trader_ae0bed5d-9664-44c8-b728-7a0c2c6665e3[0m
+[36m2026-02-16 19:42:35,866 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 3c5bce4c-7570-4c99-aa4d-cd38f3709654[0m
+[36m2026-02-16 19:42:35,866 - traders.base_trader - INFO - Trader queue name: trader_3c5bce4c-7570-4c99-aa4d-cd38f3709654[0m
+[36m2026-02-16 19:42:35,867 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 0679f0ed-67e7-489f-acc9-8ddcf76ce7f9[0m
+[36m2026-02-16 19:42:35,867 - traders.base_trader - INFO - Trader queue name: trader_0679f0ed-67e7-489f-acc9-8ddcf76ce7f9[0m
+[36m2026-02-16 19:42:36,014 - traders.base_trader - INFO - trader 6f4538b5-c6de-4895-9fec-7f66bfbf516e is waiting[0m
+[36m2026-02-16 19:42:36,014 - traders.base_trader - INFO - trader ae0bed5d-9664-44c8-b728-7a0c2c6665e3 is waiting[0m
+[36m2026-02-16 19:42:36,014 - traders.base_trader - INFO - trader 3c5bce4c-7570-4c99-aa4d-cd38f3709654 is waiting[0m
+[36m2026-02-16 19:42:36,014 - traders.base_trader - INFO - trader 0679f0ed-67e7-489f-acc9-8ddcf76ce7f9 is waiting[0m
+[36m2026-02-16 19:42:43,463 - traders.base_trader - INFO - Trader 0679f0ed-67e7-489f-acc9-8ddcf76ce7f9 updated inventory: shares: 20.0, cash: 2600.0[0m
+[36m2026-02-16 19:46:11,732 - traders.base_trader - INFO - Trader 3e8b563d-ff8b-4c5d-aaf1-5a688f0b408e channel closed[0m
+[36m2026-02-16 19:46:11,732 - traders.base_trader - INFO - Trader 3e8b563d-ff8b-4c5d-aaf1-5a688f0b408e connection closed[0m
+[36m2026-02-16 19:52:37,958 - traders.base_trader - INFO - Trader of type NOISE created with UUID: 84e28b91-5e53-4522-9016-479c07fa2518[0m
+[36m2026-02-16 19:52:37,958 - traders.base_trader - INFO - Trader queue name: trader_84e28b91-5e53-4522-9016-479c07fa2518[0m
+[36m2026-02-16 19:52:37,958 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 66aa7f7a-cff2-47cd-8213-300a49bbea26[0m
+[36m2026-02-16 19:52:37,958 - traders.base_trader - INFO - Trader queue name: trader_66aa7f7a-cff2-47cd-8213-300a49bbea26[0m
+[36m2026-02-16 19:52:37,958 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: a27a6419-a9cc-47c7-b036-e32112295232[0m
+[36m2026-02-16 19:52:37,958 - traders.base_trader - INFO - Trader queue name: trader_a27a6419-a9cc-47c7-b036-e32112295232[0m
+[36m2026-02-16 19:52:37,959 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 1ee99f2d-1a9e-41e4-ba09-2a2beefc00e6[0m
+[36m2026-02-16 19:52:37,959 - traders.base_trader - INFO - Trader queue name: trader_1ee99f2d-1a9e-41e4-ba09-2a2beefc00e6[0m
+[36m2026-02-16 19:52:37,959 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 3d1235b4-a02f-46cc-9999-2aef9dcf1733[0m
+[36m2026-02-16 19:52:37,959 - traders.base_trader - INFO - Trader queue name: trader_3d1235b4-a02f-46cc-9999-2aef9dcf1733[0m
+[36m2026-02-16 19:52:38,181 - traders.base_trader - INFO - trader 66aa7f7a-cff2-47cd-8213-300a49bbea26 is waiting[0m
+[36m2026-02-16 19:52:38,181 - traders.base_trader - INFO - trader a27a6419-a9cc-47c7-b036-e32112295232 is waiting[0m
+[36m2026-02-16 19:52:38,181 - traders.base_trader - INFO - trader 1ee99f2d-1a9e-41e4-ba09-2a2beefc00e6 is waiting[0m
+[36m2026-02-16 19:52:38,181 - traders.base_trader - INFO - trader 3d1235b4-a02f-46cc-9999-2aef9dcf1733 is waiting[0m
+[36m2026-02-16 19:52:45,020 - traders.base_trader - INFO - Trader 3d1235b4-a02f-46cc-9999-2aef9dcf1733 updated inventory: shares: 21.0, cash: 2495.0[0m
+[36m2026-02-16 19:52:47,743 - traders.base_trader - INFO - Trader 3d1235b4-a02f-46cc-9999-2aef9dcf1733 updated inventory: shares: 20.0, cash: 2587.0[0m
+[36m2026-02-16 19:54:24,962 - traders.base_trader - INFO - Trader of type NOISE created with UUID: 09fbce9b-596e-4b8f-93ff-f5dde0bfadc2[0m
+[36m2026-02-16 19:54:24,962 - traders.base_trader - INFO - Trader queue name: trader_09fbce9b-596e-4b8f-93ff-f5dde0bfadc2[0m
+[36m2026-02-16 19:54:24,963 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: fefaad00-ba1a-45b5-b5dc-08935534112e[0m
+[36m2026-02-16 19:54:24,963 - traders.base_trader - INFO - Trader queue name: trader_fefaad00-ba1a-45b5-b5dc-08935534112e[0m
+[36m2026-02-16 19:54:24,963 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 91fb695a-94bb-4053-bb45-2a03fab52ed8[0m
+[36m2026-02-16 19:54:24,963 - traders.base_trader - INFO - Trader queue name: trader_91fb695a-94bb-4053-bb45-2a03fab52ed8[0m
+[36m2026-02-16 19:54:24,963 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: fa8ad17c-d507-485d-9743-76b9c016c06d[0m
+[36m2026-02-16 19:54:24,963 - traders.base_trader - INFO - Trader queue name: trader_fa8ad17c-d507-485d-9743-76b9c016c06d[0m
+[36m2026-02-16 19:54:24,963 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 8d640aa3-4832-4aaf-aef7-edd135ad1d36[0m
+[36m2026-02-16 19:54:24,963 - traders.base_trader - INFO - Trader queue name: trader_8d640aa3-4832-4aaf-aef7-edd135ad1d36[0m
+[36m2026-02-16 19:54:25,103 - traders.base_trader - INFO - trader fefaad00-ba1a-45b5-b5dc-08935534112e is waiting[0m
+[36m2026-02-16 19:54:25,103 - traders.base_trader - INFO - trader 91fb695a-94bb-4053-bb45-2a03fab52ed8 is waiting[0m
+[36m2026-02-16 19:54:25,103 - traders.base_trader - INFO - trader fa8ad17c-d507-485d-9743-76b9c016c06d is waiting[0m
+[36m2026-02-16 19:54:25,103 - traders.base_trader - INFO - trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 is waiting[0m
+[36m2026-02-16 19:55:03,589 - traders.base_trader - INFO - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 updated inventory: shares: 21.0, cash: 2502.0[0m
+[36m2026-02-16 19:55:13,986 - traders.base_trader - INFO - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 updated inventory: shares: 22.0, cash: 2404.0[0m
+[36m2026-02-16 19:55:16,257 - traders.base_trader - INFO - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 updated inventory: shares: 23.0, cash: 2306.0[0m
+[36m2026-02-16 19:55:19,145 - traders.base_trader - INFO - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 updated inventory: shares: 24.0, cash: 2208.0[0m
+[36m2026-02-16 19:55:19,328 - traders.base_trader - INFO - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 updated inventory: shares: 25.0, cash: 2110.0[0m
+[36m2026-02-16 19:55:26,986 - traders.base_trader - INFO - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 updated inventory: shares: 26.0, cash: 2012.0[0m
+[36m2026-02-16 19:55:28,843 - traders.base_trader - INFO - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 updated inventory: shares: 27.0, cash: 1914.0[0m
+[36m2026-02-16 19:55:29,553 - traders.base_trader - INFO - Trader of type NOISE created with UUID: 1267e109-28b0-4bb3-be32-59185b673c42[0m
+[36m2026-02-16 19:55:29,553 - traders.base_trader - INFO - Trader queue name: trader_1267e109-28b0-4bb3-be32-59185b673c42[0m
+[36m2026-02-16 19:55:29,553 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: d1d413e8-13a2-4d87-b86d-af022ddfb0bd[0m
+[36m2026-02-16 19:55:29,553 - traders.base_trader - INFO - Trader queue name: trader_d1d413e8-13a2-4d87-b86d-af022ddfb0bd[0m
+[36m2026-02-16 19:55:29,553 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: f0b337b9-c87e-4239-8f2e-0660b85eb32b[0m
+[36m2026-02-16 19:55:29,553 - traders.base_trader - INFO - Trader queue name: trader_f0b337b9-c87e-4239-8f2e-0660b85eb32b[0m
+[36m2026-02-16 19:55:29,553 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 350d2828-a5dd-4f87-826e-a4b7565e9040[0m
+[36m2026-02-16 19:55:29,553 - traders.base_trader - INFO - Trader queue name: trader_350d2828-a5dd-4f87-826e-a4b7565e9040[0m
+[36m2026-02-16 19:55:29,553 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: c077469c-abf2-4e7f-a877-4c9af2d86d02[0m
+[36m2026-02-16 19:55:29,553 - traders.base_trader - INFO - Trader queue name: trader_c077469c-abf2-4e7f-a877-4c9af2d86d02[0m
+[36m2026-02-16 19:55:29,715 - traders.base_trader - INFO - trader d1d413e8-13a2-4d87-b86d-af022ddfb0bd is waiting[0m
+[36m2026-02-16 19:55:29,715 - traders.base_trader - INFO - trader f0b337b9-c87e-4239-8f2e-0660b85eb32b is waiting[0m
+[36m2026-02-16 19:55:29,715 - traders.base_trader - INFO - trader 350d2828-a5dd-4f87-826e-a4b7565e9040 is waiting[0m
+[36m2026-02-16 19:55:29,716 - traders.base_trader - INFO - trader c077469c-abf2-4e7f-a877-4c9af2d86d02 is waiting[0m
+[36m2026-02-16 19:55:35,681 - traders.base_trader - INFO - Trader c077469c-abf2-4e7f-a877-4c9af2d86d02 updated inventory: shares: 21.0, cash: 2500.0[0m
+[36m2026-02-16 19:55:41,205 - traders.base_trader - INFO - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 updated inventory: shares: 28.0, cash: 1816.0[0m
+[36m2026-02-16 19:55:45,593 - traders.base_trader - INFO - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 updated inventory: shares: 29.0, cash: 1718.0[0m
+[36m2026-02-16 19:55:47,815 - traders.base_trader - INFO - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 updated inventory: shares: 30.0, cash: 1620.0[0m
+[36m2026-02-16 19:55:52,121 - traders.base_trader - INFO - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 updated inventory: shares: 31.0, cash: 1522.0[0m
+[36m2026-02-16 19:55:58,008 - traders.base_trader - INFO - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 updated inventory: shares: 32.0, cash: 1424.0[0m
+[36m2026-02-16 19:56:04,006 - traders.base_trader - INFO - Trader c077469c-abf2-4e7f-a877-4c9af2d86d02 updated inventory: shares: 22.0, cash: 2400.0[0m
+[36m2026-02-16 19:56:04,595 - traders.base_trader - INFO - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 updated inventory: shares: 33.0, cash: 1326.0[0m
+[36m2026-02-16 19:56:09,841 - traders.base_trader - INFO - Trader c077469c-abf2-4e7f-a877-4c9af2d86d02 updated inventory: shares: 23.0, cash: 2300.0[0m
+[36m2026-02-16 19:56:10,644 - traders.base_trader - INFO - Trader c077469c-abf2-4e7f-a877-4c9af2d86d02 updated inventory: shares: 24.0, cash: 2200.0[0m
+[36m2026-02-16 19:56:11,935 - traders.base_trader - INFO - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 updated inventory: shares: 34.0, cash: 1228.0[0m
+[36m2026-02-16 19:56:11,960 - traders.base_trader - INFO - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 updated inventory: shares: 35.0, cash: 1130.0[0m
+[36m2026-02-16 19:56:28,989 - traders.base_trader - INFO - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 updated inventory: shares: 36.0, cash: 1032.0[0m
+[36m2026-02-16 19:56:33,948 - traders.base_trader - INFO - Trader c077469c-abf2-4e7f-a877-4c9af2d86d02 updated inventory: shares: 25.0, cash: 2100.0[0m
+[36m2026-02-16 19:56:35,761 - traders.base_trader - INFO - Trader c077469c-abf2-4e7f-a877-4c9af2d86d02 updated inventory: shares: 26.0, cash: 2000.0[0m
+[36m2026-02-16 19:56:37,614 - traders.base_trader - INFO - Trader c077469c-abf2-4e7f-a877-4c9af2d86d02 updated inventory: shares: 27.0, cash: 1900.0[0m
+[36m2026-02-16 19:56:40,290 - traders.base_trader - INFO - Trader c077469c-abf2-4e7f-a877-4c9af2d86d02 updated inventory: shares: 28.0, cash: 1800.0[0m
+[36m2026-02-16 19:56:42,645 - traders.base_trader - INFO - Trader c077469c-abf2-4e7f-a877-4c9af2d86d02 updated inventory: shares: 29.0, cash: 1700.0[0m
+[36m2026-02-16 19:56:44,820 - traders.base_trader - INFO - Trader c077469c-abf2-4e7f-a877-4c9af2d86d02 updated inventory: shares: 30.0, cash: 1600.0[0m
+[36m2026-02-16 19:56:44,926 - traders.base_trader - INFO - Trader c077469c-abf2-4e7f-a877-4c9af2d86d02 updated inventory: shares: 31.0, cash: 1500.0[0m
+[36m2026-02-16 19:56:46,604 - traders.base_trader - INFO - Trader c077469c-abf2-4e7f-a877-4c9af2d86d02 updated inventory: shares: 32.0, cash: 1400.0[0m
+[36m2026-02-16 19:56:49,776 - traders.base_trader - INFO - Trader c077469c-abf2-4e7f-a877-4c9af2d86d02 updated inventory: shares: 33.0, cash: 1300.0[0m
+[31m2026-02-16 19:57:38,536 - traders.base_trader - CRITICAL - Trader 66aa7f7a-cff2-47cd-8213-300a49bbea26: type: HUMAN. Closure signal received. Preparing to stop trading activities.[0m
+[31m2026-02-16 19:57:38,536 - traders.base_trader - CRITICAL - Trader 84e28b91-5e53-4522-9016-479c07fa2518: type: NOISE. Closure signal received. Preparing to stop trading activities.[0m
+[31m2026-02-16 19:57:38,538 - traders.base_trader - CRITICAL - Trader 3d1235b4-a02f-46cc-9999-2aef9dcf1733: type: HUMAN. Closure signal received. Preparing to stop trading activities.[0m
+[31m2026-02-16 19:57:38,538 - traders.base_trader - CRITICAL - Trader a27a6419-a9cc-47c7-b036-e32112295232: type: HUMAN. Closure signal received. Preparing to stop trading activities.[0m
+[31m2026-02-16 19:57:38,539 - traders.base_trader - CRITICAL - Trader 1ee99f2d-1a9e-41e4-ba09-2a2beefc00e6: type: HUMAN. Closure signal received. Preparing to stop trading activities.[0m
+[36m2026-02-16 19:57:38,557 - traders.base_trader - INFO - Trader a27a6419-a9cc-47c7-b036-e32112295232 channel closed[0m
+[36m2026-02-16 19:57:38,562 - traders.base_trader - INFO - Trader 1ee99f2d-1a9e-41e4-ba09-2a2beefc00e6 channel closed[0m
+[36m2026-02-16 19:57:38,564 - traders.base_trader - INFO - Trader 84e28b91-5e53-4522-9016-479c07fa2518 channel closed[0m
+[36m2026-02-16 19:57:38,565 - traders.base_trader - INFO - Trader 66aa7f7a-cff2-47cd-8213-300a49bbea26 channel closed[0m
+[36m2026-02-16 19:57:38,568 - traders.base_trader - INFO - Trader 3d1235b4-a02f-46cc-9999-2aef9dcf1733 channel closed[0m
+[36m2026-02-16 19:58:26,134 - traders.base_trader - INFO - Trader c077469c-abf2-4e7f-a877-4c9af2d86d02 updated inventory: shares: 34.0, cash: 1200.0[0m
+[36m2026-02-16 19:58:32,453 - traders.base_trader - INFO - Trader c077469c-abf2-4e7f-a877-4c9af2d86d02 updated inventory: shares: 35.0, cash: 1100.0[0m
+[36m2026-02-16 19:58:57,318 - traders.base_trader - INFO - Trader 1267e109-28b0-4bb3-be32-59185b673c42 channel closed[0m
+[36m2026-02-16 19:58:57,318 - traders.base_trader - INFO - Trader 09fbce9b-596e-4b8f-93ff-f5dde0bfadc2 channel closed[0m
+[36m2026-02-16 19:58:57,318 - traders.base_trader - INFO - Trader 1267e109-28b0-4bb3-be32-59185b673c42 connection closed[0m
+[36m2026-02-16 19:58:57,318 - traders.base_trader - INFO - Trader 09fbce9b-596e-4b8f-93ff-f5dde0bfadc2 connection closed[0m
+[36m2026-02-16 19:59:25,573 - traders.base_trader - INFO - Trader of type NOISE created with UUID: 51d74db7-25c0-4610-a2a3-3f79414b7746[0m
+[36m2026-02-16 19:59:25,575 - traders.base_trader - INFO - Trader queue name: trader_51d74db7-25c0-4610-a2a3-3f79414b7746[0m
+[36m2026-02-16 19:59:25,576 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 6beaec83-b851-4ff9-aa00-02145d1be6c6[0m
+[36m2026-02-16 19:59:25,576 - traders.base_trader - INFO - Trader queue name: trader_6beaec83-b851-4ff9-aa00-02145d1be6c6[0m
+[36m2026-02-16 19:59:25,576 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 0a40fbc3-15c9-4e5b-a095-2f7a035e84e4[0m
+[36m2026-02-16 19:59:25,576 - traders.base_trader - INFO - Trader queue name: trader_0a40fbc3-15c9-4e5b-a095-2f7a035e84e4[0m
+[36m2026-02-16 19:59:25,576 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 32141145-d62b-42c8-9ffc-71c24e15a3ff[0m
+[36m2026-02-16 19:59:25,576 - traders.base_trader - INFO - Trader queue name: trader_32141145-d62b-42c8-9ffc-71c24e15a3ff[0m
+[36m2026-02-16 19:59:25,576 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 89e23342-bec0-4b4d-ba4a-d364ede93a8d[0m
+[36m2026-02-16 19:59:25,576 - traders.base_trader - INFO - Trader queue name: trader_89e23342-bec0-4b4d-ba4a-d364ede93a8d[0m
+[36m2026-02-16 19:59:25,742 - traders.base_trader - INFO - trader 6beaec83-b851-4ff9-aa00-02145d1be6c6 is waiting[0m
+[36m2026-02-16 19:59:25,742 - traders.base_trader - INFO - trader 0a40fbc3-15c9-4e5b-a095-2f7a035e84e4 is waiting[0m
+[36m2026-02-16 19:59:25,743 - traders.base_trader - INFO - trader 32141145-d62b-42c8-9ffc-71c24e15a3ff is waiting[0m
+[36m2026-02-16 19:59:25,743 - traders.base_trader - INFO - trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d is waiting[0m
+[36m2026-02-16 20:00:08,983 - traders.base_trader - INFO - Trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d updated inventory: shares: 21.0, cash: 2500.0[0m
+[36m2026-02-16 20:00:12,960 - traders.base_trader - INFO - Trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d updated inventory: shares: 22.0, cash: 2400.0[0m
+[36m2026-02-16 20:00:14,857 - traders.base_trader - INFO - Trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d updated inventory: shares: 23.0, cash: 2300.0[0m
+[36m2026-02-16 20:00:29,502 - traders.base_trader - INFO - Trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d updated inventory: shares: 24.0, cash: 2200.0[0m
+[36m2026-02-16 20:00:41,885 - traders.base_trader - INFO - Trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d updated inventory: shares: 25.0, cash: 2100.0[0m
+[36m2026-02-16 20:00:42,936 - traders.base_trader - INFO - Trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d updated inventory: shares: 26.0, cash: 2000.0[0m
+[36m2026-02-16 20:00:50,612 - traders.base_trader - INFO - Trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d updated inventory: shares: 27.0, cash: 1900.0[0m
+[36m2026-02-16 20:00:56,130 - traders.base_trader - INFO - Trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d updated inventory: shares: 28.0, cash: 1800.0[0m
+[36m2026-02-16 20:01:01,886 - traders.base_trader - INFO - Trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d updated inventory: shares: 29.0, cash: 1700.0[0m
+[36m2026-02-16 20:01:11,732 - traders.base_trader - INFO - Trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d updated inventory: shares: 30.0, cash: 1600.0[0m
+[36m2026-02-16 20:01:26,181 - traders.base_trader - INFO - Trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d updated inventory: shares: 31.0, cash: 1500.0[0m
+[36m2026-02-16 20:01:47,388 - traders.base_trader - INFO - Trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d updated inventory: shares: 32.0, cash: 1400.0[0m
+[36m2026-02-16 20:01:48,454 - traders.base_trader - INFO - Trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d updated inventory: shares: 33.0, cash: 1300.0[0m
+[36m2026-02-16 20:01:52,656 - traders.base_trader - INFO - Trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d updated inventory: shares: 34.0, cash: 1200.0[0m
+[36m2026-02-16 20:02:07,217 - traders.base_trader - INFO - Trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d updated inventory: shares: 35.0, cash: 1100.0[0m
+[31m2026-02-16 20:04:26,110 - traders.base_trader - CRITICAL - Trader 0a40fbc3-15c9-4e5b-a095-2f7a035e84e4: type: HUMAN. Closure signal received. Preparing to stop trading activities.[0m
+[31m2026-02-16 20:04:26,112 - traders.base_trader - CRITICAL - Trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d: type: HUMAN. Closure signal received. Preparing to stop trading activities.[0m
+[31m2026-02-16 20:04:26,116 - traders.base_trader - CRITICAL - Trader 6beaec83-b851-4ff9-aa00-02145d1be6c6: type: HUMAN. Closure signal received. Preparing to stop trading activities.[0m
+[31m2026-02-16 20:04:26,117 - traders.base_trader - CRITICAL - Trader 51d74db7-25c0-4610-a2a3-3f79414b7746: type: NOISE. Closure signal received. Preparing to stop trading activities.[0m
+[31m2026-02-16 20:04:26,120 - traders.base_trader - CRITICAL - Trader 32141145-d62b-42c8-9ffc-71c24e15a3ff: type: HUMAN. Closure signal received. Preparing to stop trading activities.[0m
+[36m2026-02-16 20:04:26,171 - traders.base_trader - INFO - Trader 32141145-d62b-42c8-9ffc-71c24e15a3ff channel closed[0m
+[36m2026-02-16 20:04:26,172 - traders.base_trader - INFO - Trader 51d74db7-25c0-4610-a2a3-3f79414b7746 channel closed[0m
+[36m2026-02-16 20:04:26,182 - traders.base_trader - INFO - Trader 0a40fbc3-15c9-4e5b-a095-2f7a035e84e4 channel closed[0m
+[36m2026-02-16 20:04:26,183 - traders.base_trader - INFO - Trader 6beaec83-b851-4ff9-aa00-02145d1be6c6 channel closed[0m
+[36m2026-02-16 20:04:26,190 - traders.base_trader - INFO - Trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d channel closed[0m
+[36m2026-02-16 20:07:15,875 - traders.base_trader - INFO - Trader of type NOISE created with UUID: 0be6065c-3010-400f-ba66-b3e43d8f903e[0m
+[36m2026-02-16 20:07:15,876 - traders.base_trader - INFO - Trader queue name: trader_0be6065c-3010-400f-ba66-b3e43d8f903e[0m
+[36m2026-02-16 20:07:15,876 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: a3fd52b2-ed4b-4999-bd2e-ddd4af2bde5c[0m
+[36m2026-02-16 20:07:15,876 - traders.base_trader - INFO - Trader queue name: trader_a3fd52b2-ed4b-4999-bd2e-ddd4af2bde5c[0m
+[36m2026-02-16 20:07:15,876 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 3c8ab3e8-2200-49de-a222-113333267c39[0m
+[36m2026-02-16 20:07:15,876 - traders.base_trader - INFO - Trader queue name: trader_3c8ab3e8-2200-49de-a222-113333267c39[0m
+[36m2026-02-16 20:07:15,876 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: 032bc3e4-3623-492a-915e-1f0b48e9fd15[0m
+[36m2026-02-16 20:07:15,876 - traders.base_trader - INFO - Trader queue name: trader_032bc3e4-3623-492a-915e-1f0b48e9fd15[0m
+[36m2026-02-16 20:07:15,876 - traders.base_trader - INFO - Trader of type HUMAN created with UUID: f4cc0d90-b118-493c-b281-d02353422fb7[0m
+[36m2026-02-16 20:07:15,876 - traders.base_trader - INFO - Trader queue name: trader_f4cc0d90-b118-493c-b281-d02353422fb7[0m
+[36m2026-02-16 20:07:16,212 - traders.base_trader - INFO - trader a3fd52b2-ed4b-4999-bd2e-ddd4af2bde5c is waiting[0m
+[36m2026-02-16 20:07:16,212 - traders.base_trader - INFO - trader 3c8ab3e8-2200-49de-a222-113333267c39 is waiting[0m
+[36m2026-02-16 20:07:16,212 - traders.base_trader - INFO - trader 032bc3e4-3623-492a-915e-1f0b48e9fd15 is waiting[0m
+[36m2026-02-16 20:07:16,212 - traders.base_trader - INFO - trader f4cc0d90-b118-493c-b281-d02353422fb7 is waiting[0m
+[36m2026-02-16 20:07:56,487 - traders.base_trader - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 updated inventory: shares: 21.0, cash: 2494.0[0m
+[36m2026-02-16 20:08:04,795 - traders.base_trader - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 updated inventory: shares: 22.0, cash: 2388.0[0m
+[36m2026-02-16 20:08:17,761 - traders.base_trader - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 updated inventory: shares: 23.0, cash: 2282.0[0m
+[36m2026-02-16 20:08:26,410 - traders.base_trader - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 updated inventory: shares: 24.0, cash: 2176.0[0m
+[36m2026-02-16 20:08:42,828 - traders.base_trader - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 updated inventory: shares: 25.0, cash: 2070.0[0m
+[36m2026-02-16 20:08:52,668 - traders.base_trader - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 updated inventory: shares: 26.0, cash: 1964.0[0m
+[36m2026-02-16 20:09:16,432 - traders.base_trader - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 updated inventory: shares: 27.0, cash: 1858.0[0m
+[36m2026-02-16 20:09:51,698 - traders.base_trader - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 updated inventory: shares: 28.0, cash: 1752.0[0m
+[36m2026-02-16 20:09:56,512 - traders.base_trader - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 updated inventory: shares: 29.0, cash: 1646.0[0m
+[36m2026-02-16 20:09:58,632 - traders.base_trader - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 updated inventory: shares: 30.0, cash: 1540.0[0m
+[36m2026-02-16 20:10:01,931 - traders.base_trader - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 updated inventory: shares: 31.0, cash: 1434.0[0m
+[36m2026-02-16 20:10:05,318 - traders.base_trader - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 updated inventory: shares: 32.0, cash: 1328.0[0m
+[36m2026-02-16 20:10:27,082 - traders.base_trader - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 updated inventory: shares: 33.0, cash: 1222.0[0m
+[36m2026-02-16 20:10:39,041 - traders.base_trader - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 updated inventory: shares: 34.0, cash: 1116.0[0m
+[36m2026-02-16 20:10:49,816 - traders.base_trader - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 updated inventory: shares: 35.0, cash: 1010.0[0m
+[36m2026-02-16 20:10:52,266 - traders.base_trader - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 updated inventory: shares: 36.0, cash: 904.0[0m
+[36m2026-02-16 20:11:17,962 - traders.base_trader - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 updated inventory: shares: 37.0, cash: 798.0[0m
+[36m2026-02-16 20:11:18,316 - traders.base_trader - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 updated inventory: shares: 38.0, cash: 692.0[0m
+[31m2026-02-16 20:12:16,566 - traders.base_trader - CRITICAL - Trader 032bc3e4-3623-492a-915e-1f0b48e9fd15: type: HUMAN. Closure signal received. Preparing to stop trading activities.[0m
+[31m2026-02-16 20:12:16,567 - traders.base_trader - CRITICAL - Trader 3c8ab3e8-2200-49de-a222-113333267c39: type: HUMAN. Closure signal received. Preparing to stop trading activities.[0m
+[31m2026-02-16 20:12:16,568 - traders.base_trader - CRITICAL - Trader 0be6065c-3010-400f-ba66-b3e43d8f903e: type: NOISE. Closure signal received. Preparing to stop trading activities.[0m
+[31m2026-02-16 20:12:16,568 - traders.base_trader - CRITICAL - Trader f4cc0d90-b118-493c-b281-d02353422fb7: type: HUMAN. Closure signal received. Preparing to stop trading activities.[0m
+[31m2026-02-16 20:12:16,569 - traders.base_trader - CRITICAL - Trader a3fd52b2-ed4b-4999-bd2e-ddd4af2bde5c: type: HUMAN. Closure signal received. Preparing to stop trading activities.[0m
+[36m2026-02-16 20:12:16,592 - traders.base_trader - INFO - Trader a3fd52b2-ed4b-4999-bd2e-ddd4af2bde5c channel closed[0m
+[36m2026-02-16 20:12:16,593 - traders.base_trader - INFO - Trader 3c8ab3e8-2200-49de-a222-113333267c39 channel closed[0m
+[36m2026-02-16 20:12:16,594 - traders.base_trader - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 channel closed[0m
+[36m2026-02-16 20:12:16,594 - traders.base_trader - INFO - Trader 0be6065c-3010-400f-ba66-b3e43d8f903e channel closed[0m
+[36m2026-02-16 20:12:16,596 - traders.base_trader - INFO - Trader 032bc3e4-3623-492a-915e-1f0b48e9fd15 channel closed[0m

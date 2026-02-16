@@ -8,3 +8,75 @@
 [31m2026-02-16 14:26:11,119 - client_connector.main - CRITICAL - Trader 161d3565-2a1b-4c88-ad33-b0a55d2b6024 disconnected[0m
 [36m2026-02-16 14:26:15,612 - client_connector.main - INFO - Trader c0b9ff4d-552c-446d-a5a7-07de907c8730 connected to websocket[0m
 [31m2026-02-16 14:30:06,024 - client_connector.main - CRITICAL - Trader c0b9ff4d-552c-446d-a5a7-07de907c8730 disconnected[0m
+[33m2026-02-16 19:17:32,078 - client_connector.main - WARNING - SQL registration failed for session 21705b46-2744-45a6-a725-309c6c9233a5: (sqlite3.OperationalError) no such table: trading_platform_sessions
+[SQL: INSERT INTO trading_platform_sessions (trading_session_uuid, num_human_traders, payload_json, response_json, created_ts) VALUES (?, ?, ?, ?, ?)]
+[parameters: ('21705b46-2744-45a6-a725-309c6c9233a5', 4, '{"alert_streak_frequency": 3, "alert_window_size": 5, "allow_self_trade": true, "initial_cash": 2600.0, "initial_midpoint": 100.0, "initial_spread": 10.0, "initial_stocks": 20, "max_orders_per_minute": 30, "num_human_traders": 4, "step": 1, "trading_day_duration": 5}', '{"human_traders": ["63edd6be-50e6-436c-b54b-4f26455a419a", "ab152ad2-007e-4f0b-a5a6-c95b3c70c274", "76dd5de7-8e98-4063-9da9-a2637e2ddede", "731b8039- ... (158 characters truncated) ... 74", "76dd5de7-8e98-4063-9da9-a2637e2ddede", "731b8039-9958-4cd9-842e-f16b5662f4fa"], "trading_session_uuid": "21705b46-2744-45a6-a725-309c6c9233a5"}', 1771265852.077093)]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)[0m
+[36m2026-02-16 19:17:32,423 - client_connector.main - INFO - Trader ab152ad2-007e-4f0b-a5a6-c95b3c70c274 connected to websocket[0m
+[36m2026-02-16 19:17:32,436 - client_connector.main - INFO - Trader 76dd5de7-8e98-4063-9da9-a2637e2ddede connected to websocket[0m
+[36m2026-02-16 19:17:32,448 - client_connector.main - INFO - Trader 63edd6be-50e6-436c-b54b-4f26455a419a connected to websocket[0m
+[36m2026-02-16 19:17:32,461 - client_connector.main - INFO - Trader 731b8039-9958-4cd9-842e-f16b5662f4fa connected to websocket[0m
+[31m2026-02-16 19:19:28,000 - client_connector.main - CRITICAL - Trader ab152ad2-007e-4f0b-a5a6-c95b3c70c274 disconnected[0m
+[31m2026-02-16 19:19:28,001 - client_connector.main - CRITICAL - Trader 76dd5de7-8e98-4063-9da9-a2637e2ddede disconnected[0m
+[31m2026-02-16 19:19:28,001 - client_connector.main - CRITICAL - Trader 63edd6be-50e6-436c-b54b-4f26455a419a disconnected[0m
+[31m2026-02-16 19:19:28,001 - client_connector.main - CRITICAL - Trader 731b8039-9958-4cd9-842e-f16b5662f4fa disconnected[0m
+[36m2026-02-16 19:30:01,202 - client_connector.main - INFO - Trader ef0eef94-1823-4b86-8f3a-759dea325f73 connected to websocket[0m
+[36m2026-02-16 19:30:01,215 - client_connector.main - INFO - Trader 78215cda-ff47-49a2-83eb-9e935911d787 connected to websocket[0m
+[36m2026-02-16 19:30:01,227 - client_connector.main - INFO - Trader 89ea70fb-927f-4e33-9aab-4e65f7398619 connected to websocket[0m
+[36m2026-02-16 19:30:01,240 - client_connector.main - INFO - Trader eb4d5e70-226e-4315-8855-f8fb5536c857 connected to websocket[0m
+[31m2026-02-16 19:36:46,494 - client_connector.main - CRITICAL - Trader 78215cda-ff47-49a2-83eb-9e935911d787 disconnected[0m
+[31m2026-02-16 19:36:46,738 - client_connector.main - CRITICAL - Trader eb4d5e70-226e-4315-8855-f8fb5536c857 disconnected[0m
+[31m2026-02-16 19:36:46,983 - client_connector.main - CRITICAL - Trader ef0eef94-1823-4b86-8f3a-759dea325f73 disconnected[0m
+[31m2026-02-16 19:36:47,429 - client_connector.main - CRITICAL - Trader 89ea70fb-927f-4e33-9aab-4e65f7398619 disconnected[0m
+[36m2026-02-16 19:42:36,230 - client_connector.main - INFO - Trader ae0bed5d-9664-44c8-b728-7a0c2c6665e3 connected to websocket[0m
+[36m2026-02-16 19:42:36,243 - client_connector.main - INFO - Trader 6f4538b5-c6de-4895-9fec-7f66bfbf516e connected to websocket[0m
+[36m2026-02-16 19:42:36,257 - client_connector.main - INFO - Trader 3c5bce4c-7570-4c99-aa4d-cd38f3709654 connected to websocket[0m
+[36m2026-02-16 19:42:36,296 - client_connector.main - INFO - Trader 0679f0ed-67e7-489f-acc9-8ddcf76ce7f9 connected to websocket[0m
+[31m2026-02-16 19:46:11,516 - client_connector.main - CRITICAL - Trader 0679f0ed-67e7-489f-acc9-8ddcf76ce7f9 disconnected[0m
+[31m2026-02-16 19:46:11,517 - client_connector.main - CRITICAL - Trader 3c5bce4c-7570-4c99-aa4d-cd38f3709654 disconnected[0m
+[31m2026-02-16 19:46:11,517 - client_connector.main - CRITICAL - Trader ae0bed5d-9664-44c8-b728-7a0c2c6665e3 disconnected[0m
+[31m2026-02-16 19:46:11,517 - client_connector.main - CRITICAL - Trader 6f4538b5-c6de-4895-9fec-7f66bfbf516e disconnected[0m
+[36m2026-02-16 19:52:38,385 - client_connector.main - INFO - Trader 3d1235b4-a02f-46cc-9999-2aef9dcf1733 connected to websocket[0m
+[36m2026-02-16 19:52:38,398 - client_connector.main - INFO - Trader 1ee99f2d-1a9e-41e4-ba09-2a2beefc00e6 connected to websocket[0m
+[36m2026-02-16 19:52:38,424 - client_connector.main - INFO - Trader 66aa7f7a-cff2-47cd-8213-300a49bbea26 connected to websocket[0m
+[36m2026-02-16 19:52:38,434 - client_connector.main - INFO - Trader a27a6419-a9cc-47c7-b036-e32112295232 connected to websocket[0m
+[31m2026-02-16 19:54:07,130 - client_connector.main - CRITICAL - Trader 3d1235b4-a02f-46cc-9999-2aef9dcf1733 disconnected[0m
+[31m2026-02-16 19:54:07,339 - client_connector.main - CRITICAL - Trader 1ee99f2d-1a9e-41e4-ba09-2a2beefc00e6 disconnected[0m
+[31m2026-02-16 19:54:07,550 - client_connector.main - CRITICAL - Trader a27a6419-a9cc-47c7-b036-e32112295232 disconnected[0m
+[31m2026-02-16 19:54:07,769 - client_connector.main - CRITICAL - Trader 66aa7f7a-cff2-47cd-8213-300a49bbea26 disconnected[0m
+[36m2026-02-16 19:54:08,815 - client_connector.main - INFO - Trader 66aa7f7a-cff2-47cd-8213-300a49bbea26 connected to websocket[0m
+[31m2026-02-16 19:54:16,901 - client_connector.main - CRITICAL - Trader 66aa7f7a-cff2-47cd-8213-300a49bbea26 disconnected[0m
+[36m2026-02-16 19:54:25,319 - client_connector.main - INFO - Trader fa8ad17c-d507-485d-9743-76b9c016c06d connected to websocket[0m
+[36m2026-02-16 19:54:25,333 - client_connector.main - INFO - Trader 91fb695a-94bb-4053-bb45-2a03fab52ed8 connected to websocket[0m
+[36m2026-02-16 19:54:25,351 - client_connector.main - INFO - Trader fefaad00-ba1a-45b5-b5dc-08935534112e connected to websocket[0m
+[36m2026-02-16 19:54:25,361 - client_connector.main - INFO - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 connected to websocket[0m
+[31m2026-02-16 19:54:27,029 - client_connector.main - CRITICAL - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 disconnected[0m
+[36m2026-02-16 19:54:27,120 - client_connector.main - INFO - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 connected to websocket[0m
+[31m2026-02-16 19:55:15,889 - client_connector.main - CRITICAL - Trader 8d640aa3-4832-4aaf-aef7-edd135ad1d36 disconnected[0m
+[31m2026-02-16 19:55:16,363 - client_connector.main - CRITICAL - Trader fa8ad17c-d507-485d-9743-76b9c016c06d disconnected[0m
+[31m2026-02-16 19:55:16,622 - client_connector.main - CRITICAL - Trader 91fb695a-94bb-4053-bb45-2a03fab52ed8 disconnected[0m
+[31m2026-02-16 19:55:16,947 - client_connector.main - CRITICAL - Trader fefaad00-ba1a-45b5-b5dc-08935534112e disconnected[0m
+[36m2026-02-16 19:55:29,926 - client_connector.main - INFO - Trader f0b337b9-c87e-4239-8f2e-0660b85eb32b connected to websocket[0m
+[36m2026-02-16 19:55:29,938 - client_connector.main - INFO - Trader c077469c-abf2-4e7f-a877-4c9af2d86d02 connected to websocket[0m
+[36m2026-02-16 19:55:29,950 - client_connector.main - INFO - Trader 350d2828-a5dd-4f87-826e-a4b7565e9040 connected to websocket[0m
+[36m2026-02-16 19:55:29,964 - client_connector.main - INFO - Trader d1d413e8-13a2-4d87-b86d-af022ddfb0bd connected to websocket[0m
+[31m2026-02-16 19:56:13,733 - client_connector.main - CRITICAL - Trader c077469c-abf2-4e7f-a877-4c9af2d86d02 disconnected[0m
+[31m2026-02-16 19:56:14,228 - client_connector.main - CRITICAL - Trader 350d2828-a5dd-4f87-826e-a4b7565e9040 disconnected[0m
+[31m2026-02-16 19:56:14,529 - client_connector.main - CRITICAL - Trader f0b337b9-c87e-4239-8f2e-0660b85eb32b disconnected[0m
+[31m2026-02-16 19:56:14,768 - client_connector.main - CRITICAL - Trader d1d413e8-13a2-4d87-b86d-af022ddfb0bd disconnected[0m
+[36m2026-02-16 19:59:25,987 - client_connector.main - INFO - Trader 6beaec83-b851-4ff9-aa00-02145d1be6c6 connected to websocket[0m
+[36m2026-02-16 19:59:26,000 - client_connector.main - INFO - Trader 0a40fbc3-15c9-4e5b-a095-2f7a035e84e4 connected to websocket[0m
+[36m2026-02-16 19:59:26,016 - client_connector.main - INFO - Trader 32141145-d62b-42c8-9ffc-71c24e15a3ff connected to websocket[0m
+[36m2026-02-16 19:59:26,024 - client_connector.main - INFO - Trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d connected to websocket[0m
+[31m2026-02-16 20:05:59,224 - client_connector.main - CRITICAL - Trader 6beaec83-b851-4ff9-aa00-02145d1be6c6 disconnected[0m
+[31m2026-02-16 20:06:00,922 - client_connector.main - CRITICAL - Trader 0a40fbc3-15c9-4e5b-a095-2f7a035e84e4 disconnected[0m
+[31m2026-02-16 20:06:01,869 - client_connector.main - CRITICAL - Trader 32141145-d62b-42c8-9ffc-71c24e15a3ff disconnected[0m
+[31m2026-02-16 20:06:03,557 - client_connector.main - CRITICAL - Trader 89e23342-bec0-4b4d-ba4a-d364ede93a8d disconnected[0m
+[36m2026-02-16 20:07:16,287 - client_connector.main - INFO - Trader 032bc3e4-3623-492a-915e-1f0b48e9fd15 connected to websocket[0m
+[36m2026-02-16 20:07:16,306 - client_connector.main - INFO - Trader 3c8ab3e8-2200-49de-a222-113333267c39 connected to websocket[0m
+[36m2026-02-16 20:07:16,319 - client_connector.main - INFO - Trader a3fd52b2-ed4b-4999-bd2e-ddd4af2bde5c connected to websocket[0m
+[36m2026-02-16 20:07:16,330 - client_connector.main - INFO - Trader f4cc0d90-b118-493c-b281-d02353422fb7 connected to websocket[0m
+[31m2026-02-16 20:08:56,111 - client_connector.main - CRITICAL - Trader f4cc0d90-b118-493c-b281-d02353422fb7 disconnected[0m
+[31m2026-02-16 20:08:56,286 - client_connector.main - CRITICAL - Trader 032bc3e4-3623-492a-915e-1f0b48e9fd15 disconnected[0m
+[31m2026-02-16 20:08:56,487 - client_connector.main - CRITICAL - Trader 3c8ab3e8-2200-49de-a222-113333267c39 disconnected[0m
+[31m2026-02-16 20:08:56,711 - client_connector.main - CRITICAL - Trader a3fd52b2-ed4b-4999-bd2e-ddd4af2bde5c disconnected[0m

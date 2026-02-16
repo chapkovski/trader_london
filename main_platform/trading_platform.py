@@ -4,7 +4,7 @@ import uuid
 from pydantic import ValidationError
 from main_platform.custom_logger import setup_custom_logger
 from typing import List, Dict
-from structures import OrderStatus, OrderType, TransactionModel, Order, TraderType, Message
+from structures import OrderStatus, OrderType, Order, TraderType
 import asyncio
 import os
 from main_platform.utils import CustomEncoder, now, if_active
@@ -13,27 +13,13 @@ from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 import random
 import math
+from main_platform.sql_store import SQLStore
 
 logger = setup_custom_logger(__name__)
 
-# Mongo toggle: allow disabling persistence for environments without MongoDB.
-MONGO_DISABLED = os.getenv('DISABLE_MONGO', '').lower() in ('1', 'true', 'yes')
-from mongoengine import connect, get_connection
-
-MONGO_ENABLED = False
-if not MONGO_DISABLED:
-    try:
-        connect(
-            db=os.getenv('MONGO_DB', 'trader'),
-            host=os.getenv('MONGO_URL', 'mongodb://localhost:27017/trader'),
-        )
-        # verify connection up-front
-        conn = get_connection()
-        conn.admin.command("ping")
-        MONGO_ENABLED = True
-    except Exception as e:
-        # If Mongo isn't reachable, continue without persistence.
-        logger.warning(f"Mongo disabled due to connection error: {e}")
+SQL_DB = SQLStore(logger)
+SQL_DB.initialize()
+SQL_ENABLED = SQL_DB.enabled
 
 rabbitmq_url = os.getenv('RABBITMQ_URL', 'amqp://localhost')
 
@@ -42,7 +28,7 @@ class TradingSession:
     duration: int
     active: bool
     start_time: datetime
-    transactions = List[TransactionModel]
+    transactions = List[Dict]
     all_orders = Dict[uuid.UUID, Dict]
 
     def __init__(
@@ -54,7 +40,8 @@ class TradingSession:
         allow_self_trade=False,
     ):
         self.active = False
-        self.mongo_enabled = MONGO_ENABLED
+        self.sql_enabled = SQL_ENABLED
+        self.sql_store = SQL_DB
         self.duration = duration
         self.default_price = default_price
         self.alert_streak_frequency = max(1, int(alert_streak_frequency or 1))
@@ -76,7 +63,7 @@ class TradingSession:
         self.trader_transaction_counts = defaultdict(int)
         self.lock = Lock()
         self.current_price = 0  # handling non-defined attribute
-        self._transactions_mem = []  # fallback when Mongo is disabled
+        self._transactions_mem = []  # in-memory transaction history for runtime broadcasts
         self._last_broadcast_price = None
         self._last_seen_price = None
         self._last_seen_transaction_key = None
@@ -84,6 +71,10 @@ class TradingSession:
         self._recent_price_moves = []
         self._last_alert_signature = None
         self._dividend_announced = False
+        self._last_broadcast_book_levels = {"bids": {}, "asks": {}}
+        self._last_trader_book_levels = {}
+        self._last_trader_order_maps = {}
+        self._last_trader_balances = {}
 
     @staticmethod
     def _transaction_ts(transaction):
@@ -153,13 +144,6 @@ class TradingSession:
 
     @property
     def transactions(self):
-        if self.mongo_enabled:
-            try:
-                transactions = TransactionModel.objects(trading_session_id=self.id).order_by("timestamp")
-                return [transaction.to_mongo().to_dict() for transaction in transactions]
-            except Exception as e:
-                logger.warning(f"Disabling Mongo due to error fetching transactions: {e}")
-                self.mongo_enabled = False
         return self._transactions_mem
 
     @property
@@ -203,7 +187,12 @@ class TradingSession:
         """Returns the price of last transaction. If there are no transactions, returns None."""
         if not self.transactions or len(self.transactions) == 0:
             return None
-        transactions = [{'price': t['price'], 'timestamp': t['timestamp'].timestamp()} for t in self.transactions]
+        transactions = []
+        for t in self.transactions:
+            ts = t.get('timestamp')
+            if hasattr(ts, "timestamp"):
+                ts = ts.timestamp()
+            transactions.append({'price': t.get('price'), 'timestamp': ts or 0})
         # sort by timestamp
         transactions.sort(key=lambda x: x['timestamp'])
         return transactions[-1]['price']
@@ -277,6 +266,106 @@ class TradingSession:
         sorted_levels = sorted(totals.items(), key=lambda item: item[0], reverse=reverse)
         return [{'x': price, 'y': amount} for price, amount in sorted_levels]
 
+    @staticmethod
+    def _levels_to_map(levels):
+        out = {}
+        for level in levels or []:
+            price = level.get("x")
+            amount = level.get("y")
+            if price is None:
+                continue
+            try:
+                p = float(price)
+                a = float(amount or 0)
+            except (TypeError, ValueError):
+                continue
+            out[p] = a
+        return out
+
+    @staticmethod
+    def _levels_from_map(level_map, reverse=False):
+        prices = sorted(level_map.keys(), reverse=reverse)
+        return [{"x": p, "y": level_map[p]} for p in prices]
+
+    @classmethod
+    def _compute_levels_delta(cls, previous_levels, current_levels):
+        prev_map = cls._levels_to_map(previous_levels)
+        curr_map = cls._levels_to_map(current_levels)
+        added_or_updated = []
+        removed = []
+        for price, amount in curr_map.items():
+            if price not in prev_map or prev_map[price] != amount:
+                added_or_updated.append({"x": price, "y": amount})
+        for price in prev_map:
+            if price not in curr_map:
+                removed.append(price)
+        return {"added_or_updated": added_or_updated, "removed": removed}, curr_map
+
+    @classmethod
+    def _apply_levels_delta(cls, base_levels, delta, reverse=False):
+        level_map = cls._levels_to_map(base_levels)
+        payload = delta or {}
+        for item in payload.get("added_or_updated") or []:
+            price = item.get("x")
+            amount = item.get("y")
+            try:
+                level_map[float(price)] = float(amount or 0)
+            except (TypeError, ValueError):
+                continue
+        for price in payload.get("removed") or []:
+            try:
+                level_map.pop(float(price), None)
+            except (TypeError, ValueError):
+                continue
+        return cls._levels_from_map(level_map, reverse=reverse)
+
+    @staticmethod
+    def _orders_to_map(orders):
+        out = {}
+        for order in orders or []:
+            order_id = order.get("id")
+            if order_id is None:
+                continue
+            out[str(order_id)] = dict(order)
+        return out
+
+    @classmethod
+    def _compute_orders_delta(cls, previous_orders, current_orders):
+        prev_map = cls._orders_to_map(previous_orders)
+        curr_map = cls._orders_to_map(current_orders)
+        added = []
+        updated = []
+        removed = []
+        for oid, order in curr_map.items():
+            if oid not in prev_map:
+                added.append(order)
+            elif prev_map[oid] != order:
+                updated.append(order)
+        for oid in prev_map:
+            if oid not in curr_map:
+                removed.append(oid)
+        return {"added": added, "updated": updated, "removed": removed}, curr_map
+
+    @staticmethod
+    def _compute_balances_delta(previous_balances, current_balances):
+        prev = previous_balances or {}
+        curr = current_balances or {}
+        delta = {}
+        for key, curr_value in curr.items():
+            prev_value = prev.get(key)
+            if prev_value is None:
+                delta[key] = curr_value
+                continue
+            try:
+                diff = float(curr_value) - float(prev_value)
+            except (TypeError, ValueError):
+                if curr_value != prev_value:
+                    delta[key] = curr_value
+                continue
+            if abs(diff) > 1e-9:
+                delta[key] = diff
+        return delta
+
     async def send_broadcast(self, message: dict, incoming_message=None):
         # TODO: PHILIPP: let's think how to make this more efficient but for simplicity
         # TODO we inject the current order book, active orders and transaction history into every broadcasted message
@@ -286,9 +375,17 @@ class TradingSession:
         message['type'] = message.get('type', 'update')
 
         if message.get('type') == 'closure':
-            pass  # TODO. PHILIPP. Should we inject some info here?
+            if self.sql_enabled:
+                try:
+                    self.sql_store.save_message(
+                        trading_session_uuid=self.id,
+                        message_type="closure",
+                        content=message,
+                    )
+                except Exception as exc:
+                    logger.warning(f"SQL save_message(closure) failed: {exc}")
         else:
-            # Attach a full market snapshot so traders can react without extra queries.
+            # Broadcast compact deltas instead of full snapshots.
             spread, midpoint = self.get_spread()
             transactions = self.transactions or []
             alert_message, latest_price = self._build_alert_message(transactions)
@@ -298,11 +395,29 @@ class TradingSession:
                     dividend = random.choice([0, 8, 16, 24])
                     alert_message = f"Stock paid a dividend of: ${dividend}"
                     self._dividend_announced = True
+
+            current_book = self.order_book
+            bids_delta, next_bids_map = self._compute_levels_delta(
+                self._levels_from_map(self._last_broadcast_book_levels.get("bids", {}), reverse=True),
+                current_book.get("bids") or [],
+            )
+            asks_delta, next_asks_map = self._compute_levels_delta(
+                self._levels_from_map(self._last_broadcast_book_levels.get("asks", {}), reverse=False),
+                current_book.get("asks") or [],
+            )
+            self._last_broadcast_book_levels = {"bids": next_bids_map, "asks": next_asks_map}
+            history_delta = []
+            if transactions:
+                latest_transaction = max(transactions, key=self._transaction_ts)
+                history_delta = [latest_transaction]
+
             message.update({
                 # TODO: PHILIPP: we need to think about the type of the message. it's hardcoded for now
-                'order_book': self.order_book,
-                'active_orders': self.get_active_orders_to_broadcast(),
-                'history': transactions,
+                'order_book_delta': {
+                    'bids': bids_delta,
+                    'asks': asks_delta,
+                },
+                'history_delta': history_delta,
                 'spread': spread,
                 'midpoint': midpoint,
                 'transaction_price': latest_price,
@@ -313,16 +428,15 @@ class TradingSession:
             logger.debug(
                 f"Broadcast alert_message='{alert_message}' latest_price={latest_price}"
             )
-            message_document = Message(
-                trading_session_id=self.id,  # Assuming self.id is the UUID of the TradingSession
-                content=message
-            )
-            if self.mongo_enabled:
+            if self.sql_enabled:
                 try:
-                    message_document.save()
-                except Exception as e:
-                    logger.warning(f"Disabling Mongo due to error saving message: {e}")
-                    self.mongo_enabled = False
+                    self.sql_store.save_message(
+                        trading_session_uuid=self.id,
+                        message_type=str(message.get("type") or "update"),
+                        content=message,
+                    )
+                except Exception as exc:
+                    logger.warning(f"SQL save_message(broadcast) failed: {exc}")
 
         exchange = await self.channel.get_exchange(self.broadcast_exchange_name)
         await exchange.publish(
@@ -333,25 +447,62 @@ class TradingSession:
     async def send_message_to_trader(self, trader_id, message):
 
         # TODO. PHILIPP. IT largely overlap with broadcast. We need to refactor that moving to _injection method
-        transactions = self.transactions or []
-        current_price = self._latest_transaction_price(transactions)
+        current_price = self._latest_transaction_price(self.transactions or [])
         spread, mid_price = self.get_spread()
+        current_book = self.order_book
+        current_trader_orders = self.get_active_orders_for_trader(trader_id)
+        current_balances = {
+            "cash": self._cash_for_trader(trader_id),
+            "shares": self._shares_for_trader(trader_id),
+            "reserved_cash": self._reserved_cash_for_trader(trader_id),
+            "available_cash": self._available_cash_for_trader(trader_id),
+            "reserved_shares": self._reserved_shares_for_trader(trader_id),
+            "available_shares": self._available_shares_for_trader(trader_id),
+        }
+
+        prev_book_levels = self._last_trader_book_levels.get(trader_id, {"bids": {}, "asks": {}})
+        bids_delta, next_bids_map = self._compute_levels_delta(
+            self._levels_from_map(prev_book_levels.get("bids", {}), reverse=True),
+            current_book.get("bids") or [],
+        )
+        asks_delta, next_asks_map = self._compute_levels_delta(
+            self._levels_from_map(prev_book_levels.get("asks", {}), reverse=False),
+            current_book.get("asks") or [],
+        )
+        self._last_trader_book_levels[trader_id] = {"bids": next_bids_map, "asks": next_asks_map}
+
+        prev_orders = self._last_trader_order_maps.get(trader_id, {})
+        orders_delta, next_orders = self._compute_orders_delta(list(prev_orders.values()), current_trader_orders)
+        self._last_trader_order_maps[trader_id] = next_orders
+
+        prev_balances = self._last_trader_balances.get(trader_id, {})
+        balances_delta = self._compute_balances_delta(prev_balances, current_balances)
+        self._last_trader_balances[trader_id] = current_balances
+
         message.update({
             'type': 'update',  # TODO: PHILIPP: we need to think about the type of the message. it's hardcoded for now
-            'order_book': self.order_book,
-            'active_orders': self.get_active_orders_to_broadcast(),
-            'trader_orders': self.get_orders_for_trader(trader_id),
-            'transaction_history': transactions,
+            'order_book_delta': {
+                'bids': bids_delta,
+                'asks': asks_delta,
+            },
+            'orders_delta': orders_delta,
+            'balances_delta': balances_delta,
             'transaction_count': int(self.trader_transaction_counts.get(trader_id, 0)),
-            'reserved_cash': self._reserved_cash_for_trader(trader_id),
-            'available_cash': self._available_cash_for_trader(trader_id),
-            'reserved_shares': self._reserved_shares_for_trader(trader_id),
-            'available_shares': self._available_shares_for_trader(trader_id),
             'spread': spread,
+            'midpoint': mid_price,
             'mid_price': mid_price,
-
             'current_price': current_price,
         })
+        if self.sql_enabled:
+            try:
+                self.sql_store.save_message(
+                    trading_session_uuid=self.id,
+                    message_type=str(message.get("type") or "update"),
+                    content=message,
+                    recipient_trader_uuid=str(trader_id or ""),
+                )
+            except Exception as exc:
+                logger.warning(f"SQL save_message(trader) failed: {exc}")
         logger.debug(f"Trader {trader_id} current_price={current_price}")
         await self.trader_exchange.publish(
             aio_pika.Message(body=json.dumps(message, cls=CustomEncoder).encode()),
@@ -360,7 +511,7 @@ class TradingSession:
 
     @property
     def list_active_orders(self):
-        """ Returns a list of all active orders. When we switch to real DB or mongo, we won't need it anymore."""
+        """Returns a list of all active orders."""
         return list(self.active_orders.values())
 
     def get_orders_for_trader(self, trader_id):
@@ -368,6 +519,14 @@ class TradingSession:
         return [
             order
             for order in self.all_orders.values()
+            if order.get('trader_id') == trader_id
+        ]
+
+    def get_active_orders_for_trader(self, trader_id):
+        """Returns only currently active orders for the given trader."""
+        return [
+            order
+            for order in self.active_orders.values()
             if order.get('trader_id') == trader_id
         ]
 
@@ -443,22 +602,32 @@ class TradingSession:
             return self.default_price
 
     def create_transaction(self, bid, ask, transaction_price):
-        # Create a transaction object with automatic id and timestamp generation
-        transaction = TransactionModel(
-            trading_session_id=self.id,  # Assuming session_id is the UUID of the TradingSession
-            bid_order_id=bid['id'],
-            ask_order_id=ask['id'],
-            price=transaction_price
-        )
-        if self.mongo_enabled:
+        transaction = {
+            "id": str(uuid.uuid4()),
+            "trading_session_id": str(self.id),
+            "bid_order_id": str(bid.get("id") or ""),
+            "ask_order_id": str(ask.get("id") or ""),
+            "timestamp": now(),
+            "price": float(transaction_price),
+            "bid_trader_uuid": str(bid.get("trader_id") or ""),
+            "ask_trader_uuid": str(ask.get("trader_id") or ""),
+        }
+        self._transactions_mem.append(transaction)
+        if self.sql_enabled:
             try:
-                transaction.save()
-            except Exception as e:
-                logger.warning(f"Disabling Mongo due to error saving transaction: {e}")
-                self.mongo_enabled = False
-                self._transactions_mem.append(transaction.to_mongo().to_dict())
-        else:
-            self._transactions_mem.append(transaction.to_mongo().to_dict())
+                self.sql_store.save_transaction(
+                    trading_session_uuid=self.id,
+                    bid_trader_uuid=transaction["bid_trader_uuid"],
+                    ask_trader_uuid=transaction["ask_trader_uuid"],
+                    bid_order_id=transaction["bid_order_id"],
+                    ask_order_id=transaction["ask_order_id"],
+                    price=transaction["price"],
+                    timestamp=transaction["timestamp"],
+                    transaction_id=transaction["id"],
+                    transaction_json=transaction,
+                )
+            except Exception as exc:
+                logger.warning(f"SQL save_transaction failed: {exc}")
 
         # Append to self.transactions
 
@@ -479,6 +648,11 @@ class TradingSession:
         else:
             order['amount'] = remaining
             order['status'] = OrderStatus.ACTIVE.value
+        if self.sql_enabled:
+            try:
+                self.sql_store.save_order(self.id, order)
+            except Exception as exc:
+                logger.warning(f"SQL save_order(_apply_fill) failed: {exc}")
 
     def _cash_for_trader(self, trader_id):
         trader_data = self.connected_traders.get(trader_id, {})
@@ -670,6 +844,11 @@ class TradingSession:
                     )
                     self.all_orders[bid['id']]['status'] = OrderStatus.CANCELLED.value
                     self.all_orders[bid['id']]['cancellation_timestamp'] = now()
+                    if self.sql_enabled:
+                        try:
+                            self.sql_store.save_order(self.id, self.all_orders[bid['id']])
+                        except Exception as exc:
+                            logger.warning(f"SQL save_order(cancel-unaffordable) failed: {exc}")
                     bids.pop(0)
                     continue
                 transaction_amount = min(transaction_amount, float(max_affordable))
@@ -701,9 +880,25 @@ class TradingSession:
             # not there we need to create it.
             # let's not add the entire transaction here, just the order id, price, type of order, amount - so they can correclty update the inventory
             traders_to_transactions_lookup[ask['trader_id']].append(
-                {'id': ask['id'], 'price': transaction_price, 'type': 'ask', 'amount': transaction_amount})
+                {
+                    'id': ask['id'],
+                    'price': transaction_price,
+                    'type': 'ask',
+                    'amount': transaction_amount,
+                    'timestamp': transaction.get('timestamp'),
+                    'transaction_id': transaction.get('id'),
+                }
+            )
             traders_to_transactions_lookup[bid['trader_id']].append(
-                {'id': bid['id'], 'price': transaction_price, 'type': 'bid', 'amount': transaction_amount})
+                {
+                    'id': bid['id'],
+                    'price': transaction_price,
+                    'type': 'bid',
+                    'amount': transaction_amount,
+                    'timestamp': transaction.get('timestamp'),
+                    'transaction_id': transaction.get('id'),
+                }
+            )
 
             if self.all_orders[ask['id']]['status'] == OrderStatus.EXECUTED.value:
                 asks.pop(0)
@@ -787,6 +982,11 @@ class TradingSession:
             # Place the order
             placed_order = self.place_order(order.model_dump())  # Converting order to dict for compatibility
             placed_order_id = placed_order.get('id')
+            if self.sql_enabled:
+                try:
+                    self.sql_store.save_order(self.id, placed_order)
+                except Exception as exc:
+                    logger.warning(f"SQL save_order(new) failed: {exc}")
 
         except ValidationError as e:
             # Handle validation errors, e.g., log them or send a message back to the trader
@@ -820,6 +1020,11 @@ class TradingSession:
                     )
                 self.all_orders[placed_order_id]['status'] = OrderStatus.CANCELLED.value
                 self.all_orders[placed_order_id]['cancellation_timestamp'] = now()
+                if self.sql_enabled:
+                    try:
+                        self.sql_store.save_order(self.id, self.all_orders[placed_order_id])
+                    except Exception as exc:
+                        logger.warning(f"SQL save_order(ioc-cancel) failed: {exc}")
         subgroup_data = resp.pop('subgroup_broadcast', None)
         if subgroup_data:
             await self.send_message_to_subgroup(subgroup_data)
@@ -869,6 +1074,11 @@ class TradingSession:
                 )
             self.all_orders[order_id]['status'] = OrderStatus.CANCELLED.value
             self.all_orders[order_id]['cancellation_timestamp'] = now()
+            if self.sql_enabled:
+                try:
+                    self.sql_store.save_order(self.id, self.all_orders[order_id])
+                except Exception as exc:
+                    logger.warning(f"SQL save_order(cancel) failed: {exc}")
 
             return {"status": "cancel success", "order": order_id, "respond": True}
 
@@ -885,6 +1095,10 @@ class TradingSession:
             'reserved_cash': 0.0,
             'reserved_shares': 0.0,
         }
+        # Reset delta baselines for this trader (important on websocket reconnect).
+        self._last_trader_book_levels[trader_id] = {"bids": {}, "asks": {}}
+        self._last_trader_order_maps[trader_id] = {}
+        self._last_trader_balances[trader_id] = {}
 
         logger.info(f"Trader type  {trader_type} id {trader_id} connected.")
         logger.info(f"Total connected traders: {len(self.connected_traders)}")

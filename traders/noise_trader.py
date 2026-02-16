@@ -73,19 +73,30 @@ class NoiseTrader(BaseTrader):
 
     def _get_best_quotes(self):
         """
-        Returns best bid/ask from the active book.
+        Returns best bid/ask from the aggregated order book levels.
         """
-        active_orders = self.active_orders or []
-        bids = [
-            order for order in active_orders
-            if int(order.get("order_type")) == int(OrderType.BID)
-        ]
-        asks = [
-            order for order in active_orders
-            if int(order.get("order_type")) == int(OrderType.ASK)
-        ]
-        best_bid = max((order["price"] for order in bids), default=None)
-        best_ask = min((order["price"] for order in asks), default=None)
+        order_book = self.order_book or {}
+        bid_levels = order_book.get("bids") or []
+        ask_levels = order_book.get("asks") or []
+
+        best_bid = None
+        for level in bid_levels:
+            try:
+                price = float(level.get("x"))
+            except (TypeError, ValueError):
+                continue
+            if best_bid is None or price > best_bid:
+                best_bid = price
+
+        best_ask = None
+        for level in ask_levels:
+            try:
+                price = float(level.get("x"))
+            except (TypeError, ValueError):
+                continue
+            if best_ask is None or price < best_ask:
+                best_ask = price
+
         return best_bid, best_ask
 
     async def act(self):

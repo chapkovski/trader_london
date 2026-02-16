@@ -153,12 +153,18 @@ class BaseTrader:
             order_book = data.get('order_book')
             if order_book is not None:
                 self.order_book = order_book
+            order_book_delta = data.get('order_book_delta')
+            if order_book_delta is not None:
+                self.order_book = self._apply_order_book_delta(self.order_book, order_book_delta)
             active_orders = data.get('active_orders')
             if active_orders is not None:
                 self.active_orders = active_orders
                 own_orders = [order for order in active_orders if order['trader_id'] == self.id]
                 # lets convert the order list to a dictionary with keys as order ids
                 self.orders = own_orders
+            orders_delta = data.get('orders_delta')
+            if orders_delta is not None:
+                self.orders = self._apply_orders_delta(self.orders, orders_delta)
 
             handler = getattr(self, f'handle_{action_type}', None)
             if handler:
@@ -169,6 +175,60 @@ class BaseTrader:
 
         except json.JSONDecodeError:
             logger.error(f"Error decoding message: {message}")
+
+    @staticmethod
+    def _apply_order_book_delta(current_order_book, order_book_delta):
+        base = current_order_book or {"bids": [], "asks": []}
+        result = {
+            "bids": list(base.get("bids") or []),
+            "asks": list(base.get("asks") or []),
+        }
+
+        def apply_side(side_name, reverse=False):
+            side_delta = (order_book_delta or {}).get(side_name) or {}
+            levels = {float(item.get("x")): float(item.get("y") or 0) for item in result.get(side_name, []) if item.get("x") is not None}
+            for item in side_delta.get("added_or_updated") or []:
+                try:
+                    levels[float(item.get("x"))] = float(item.get("y") or 0)
+                except (TypeError, ValueError):
+                    continue
+            for price in side_delta.get("removed") or []:
+                try:
+                    levels.pop(float(price), None)
+                except (TypeError, ValueError):
+                    continue
+            sorted_prices = sorted(levels.keys(), reverse=reverse)
+            result[side_name] = [{"x": p, "y": levels[p]} for p in sorted_prices]
+
+        apply_side("bids", reverse=True)
+        apply_side("asks", reverse=False)
+        return result
+
+    @staticmethod
+    def _apply_orders_delta(current_orders, orders_delta):
+        order_map = {}
+        for order in current_orders or []:
+            order_id = order.get("id")
+            if order_id is None:
+                continue
+            order_map[str(order_id)] = order
+
+        for order_id in (orders_delta or {}).get("removed") or []:
+            order_map.pop(str(order_id), None)
+
+        for order in (orders_delta or {}).get("added") or []:
+            order_id = order.get("id")
+            if order_id is None:
+                continue
+            order_map[str(order_id)] = order
+
+        for order in (orders_delta or {}).get("updated") or []:
+            order_id = order.get("id")
+            if order_id is None:
+                continue
+            order_map[str(order_id)] = order
+
+        return list(order_map.values())
 
     def update_inventory(self, new_transactions):
         """

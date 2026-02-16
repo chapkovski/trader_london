@@ -43,15 +43,6 @@ class HumanTrader(BaseTrader):
             logger.warning("WebSocket is closed. Skipping message send.")
             return  # Skip sending the message or handle accordingly
 
-        trader_orders = kwargs.pop('trader_orders', None)
-        if trader_orders is not None:
-            self.full_orders = trader_orders
-        if self.full_orders:
-            trader_orders = self.full_orders
-        else:
-            trader_orders = self.orders or []
-        order_book = self.order_book or {'bids': [], 'asks': []}
-        kwargs['trader_orders'] = trader_orders
         try:
             return await self.websocket.send_json(
                 {"shares": self.shares,
@@ -61,7 +52,6 @@ class HumanTrader(BaseTrader):
                  'inventory': dict(shares=self.shares, cash=self.cash),
 
                  **kwargs,
-                 'order_book': order_book,
                  'initial_cash': self.initial_cash,
                  'initial_shares': self.initial_shares,
                  }
