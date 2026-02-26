@@ -37,6 +37,7 @@ class TraderManager:
         # TODO: we may start launching with more than one human trader later.
         # So far for debugging purposes we only need one human trader whose id we return to the client
         n_human_traders = params.get("num_human_traders", 1)
+        n_noise_traders = max(0, int(params.get("num_noise_traders", 1) or 0))
         self.noise_traders = [
             NoiseTrader(
                 max_orders_per_minute=params.get("max_orders_per_minute", 3),
@@ -45,6 +46,7 @@ class TraderManager:
                 cash=cash,
                 shares=shares,
             )
+            for _ in range(n_noise_traders)
         ]
 
         self.human_traders = [HumanTrader(cash=cash, shares=shares) for _ in range(n_human_traders)]

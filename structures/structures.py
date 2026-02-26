@@ -42,6 +42,12 @@ class TraderCreationData(BaseModel):
         description="Capped Poisson intensity for the single noise trader (0..max orders each minute)",
         ge=0
     )
+    num_noise_traders: int = Field(
+        default=1,
+        title="Number of Noise Traders",
+        description="How many algorithmic noise traders to run in the market",
+        ge=0
+    )
     initial_midpoint: float = Field(
         default=100,
         title="Initial Midpoint",

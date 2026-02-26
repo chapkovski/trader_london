@@ -75,6 +75,9 @@ class TradingSession:
         self._last_trader_book_levels = {}
         self._last_trader_order_maps = {}
         self._last_trader_balances = {}
+        self._mbo_event_seq = 0
+        self._mbp1_event_seq = 0
+        self._last_persisted_mbp1_signature = None
 
     @staticmethod
     def _transaction_ts(transaction):
@@ -265,6 +268,217 @@ class TradingSession:
             totals[order['price']] = totals.get(order['price'], 0) + order['amount']
         sorted_levels = sorted(totals.items(), key=lambda item: item[0], reverse=reverse)
         return [{'x': price, 'y': amount} for price, amount in sorted_levels]
+
+    @staticmethod
+    def _side_label(order_type):
+        try:
+            if int(order_type) == int(OrderType.BID):
+                return "bid"
+            if int(order_type) == int(OrderType.ASK):
+                return "ask"
+        except (TypeError, ValueError):
+            pass
+        text = str(order_type or "").strip().lower()
+        if text in {"bid", "b"}:
+            return "bid"
+        if text in {"ask", "a"}:
+            return "ask"
+        return ""
+
+    @staticmethod
+    def _as_float_or_none(value):
+        try:
+            if value is None:
+                return None
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _as_int_or_none(value):
+        try:
+            if value is None:
+                return None
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _next_mbo_event_seq(self):
+        self._mbo_event_seq += 1
+        return self._mbo_event_seq
+
+    def _next_mbp1_event_seq(self):
+        self._mbp1_event_seq += 1
+        return self._mbp1_event_seq
+
+    def _current_best_levels_snapshot(self):
+        bid_levels = {}
+        ask_levels = {}
+        for order in self.active_orders.values():
+            side = self._side_label(order.get("order_type"))
+            price = self._as_float_or_none(order.get("price"))
+            amount = self._as_float_or_none(order.get("amount"))
+            if side not in {"bid", "ask"} or price is None or amount is None or amount <= 0:
+                continue
+            target = bid_levels if side == "bid" else ask_levels
+            level = target.setdefault(price, {"size": 0.0, "count": 0})
+            level["size"] += amount
+            level["count"] += 1
+
+        best_bid_px = max(bid_levels.keys()) if bid_levels else None
+        best_ask_px = min(ask_levels.keys()) if ask_levels else None
+        best_bid = bid_levels.get(best_bid_px) if best_bid_px is not None else None
+        best_ask = ask_levels.get(best_ask_px) if best_ask_px is not None else None
+        spread = None
+        midpoint = None
+        if best_bid_px is not None and best_ask_px is not None:
+            spread = best_ask_px - best_bid_px
+            midpoint = (best_bid_px + best_ask_px) / 2.0
+        return {
+            "best_bid_px": best_bid_px,
+            "best_bid_sz": (best_bid or {}).get("size"),
+            "best_bid_ct": (best_bid or {}).get("count"),
+            "best_ask_px": best_ask_px,
+            "best_ask_sz": (best_ask or {}).get("size"),
+            "best_ask_ct": (best_ask or {}).get("count"),
+            "spread": spread,
+            "midpoint": midpoint,
+        }
+
+    def _mbp1_signature(self, snapshot: Dict):
+        return (
+            snapshot.get("best_bid_px"),
+            snapshot.get("best_bid_sz"),
+            snapshot.get("best_bid_ct"),
+            snapshot.get("best_ask_px"),
+            snapshot.get("best_ask_sz"),
+            snapshot.get("best_ask_ct"),
+        )
+
+    def _persist_mbp1_from_mbo(self, source_mbo_event: Dict):
+        if not self.sql_enabled or not source_mbo_event:
+            return
+        snapshot = self._current_best_levels_snapshot()
+        signature = self._mbp1_signature(snapshot)
+        if signature == self._last_persisted_mbp1_signature:
+            return
+        self._last_persisted_mbp1_signature = signature
+        payload = {
+            "event_seq": self._next_mbp1_event_seq(),
+            "event_ts": source_mbo_event.get("event_ts") or now(),
+            "source_mbo_event_seq": source_mbo_event.get("event_seq"),
+            "source_record_kind": source_mbo_event.get("record_kind"),
+            "source_event_type": source_mbo_event.get("event_type"),
+            "source_order_id": source_mbo_event.get("order_id"),
+            **snapshot,
+        }
+        try:
+            self.sql_store.save_mbp1_event(self.id, payload)
+        except Exception as exc:
+            logger.warning(f"SQL save_mbp1_event failed: {exc}")
+
+    def _persist_mbo_event(self, payload: Dict, emit_mbp1: bool = False):
+        if not self.sql_enabled:
+            return None
+        event_payload = dict(payload or {})
+        event_payload.setdefault("event_seq", self._next_mbo_event_seq())
+        event_payload.setdefault("event_ts", now())
+        try:
+            self.sql_store.save_mbo_event(self.id, event_payload)
+        except Exception as exc:
+            logger.warning(f"SQL save_mbo_event failed: {exc}")
+            return None
+        if emit_mbp1:
+            self._persist_mbp1_from_mbo(event_payload)
+        return event_payload
+
+    def _persist_order_state_change(
+        self,
+        order: Dict,
+        event_type: str,
+        *,
+        event_ts=None,
+        event_size=None,
+        size_delta=None,
+        size_resting_after=None,
+        match_id=None,
+        contra_order_id=None,
+        emit_mbp1: bool = True,
+        log_context: str = "",
+    ):
+        if not self.sql_enabled:
+            return
+        try:
+            self.sql_store.save_order(self.id, order)
+        except Exception as exc:
+            suffix = f"({log_context})" if log_context else ""
+            logger.warning(f"SQL save_order{suffix} failed: {exc}")
+
+        resting_after = size_resting_after
+        if resting_after is None:
+            resting_after = self._as_float_or_none((order or {}).get("amount"))
+        price = self._as_float_or_none((order or {}).get("price"))
+        event_size_val = self._as_float_or_none(event_size)
+        size_delta_val = self._as_float_or_none(size_delta)
+        if event_size_val is None:
+            if str(event_type) == "add":
+                event_size_val = resting_after
+            elif str(event_type) == "cancel":
+                event_size_val = self._as_float_or_none((order or {}).get("amount"))
+            elif str(event_type) == "fill" and size_delta_val is not None:
+                event_size_val = abs(size_delta_val)
+        if size_delta_val is None:
+            if str(event_type) == "add" and event_size_val is not None:
+                size_delta_val = event_size_val
+            elif str(event_type) in {"cancel", "fill"} and event_size_val is not None:
+                size_delta_val = -abs(event_size_val)
+
+        mbo_event = {
+            "record_kind": "order",
+            "event_type": str(event_type or ""),
+            "event_ts": event_ts or now(),
+            "side": self._side_label((order or {}).get("order_type")),
+            "order_id": str((order or {}).get("id") or ""),
+            "trader_uuid": str((order or {}).get("trader_id") or ""),
+            "price": price,
+            "size": event_size_val,
+            "size_delta": size_delta_val,
+            "size_resting_after": self._as_float_or_none(resting_after),
+            "status_after": str((order or {}).get("status") or ""),
+            "match_id": str(match_id or ""),
+            "contra_order_id": str(contra_order_id or ""),
+            "bid_order_id": "",
+            "ask_order_id": "",
+            "bid_trader_uuid": "",
+            "ask_trader_uuid": "",
+        }
+        self._persist_mbo_event(mbo_event, emit_mbp1=emit_mbp1)
+
+    def _persist_trade_mbo_event(self, transaction: Dict):
+        if not self.sql_enabled:
+            return
+        self._persist_mbo_event(
+            {
+                "record_kind": "trade",
+                "event_type": "trade",
+                "event_ts": (transaction or {}).get("timestamp") or now(),
+                "side": "",
+                "order_id": "",
+                "trader_uuid": "",
+                "price": self._as_float_or_none((transaction or {}).get("price")),
+                "size": self._as_float_or_none((transaction or {}).get("quantity")),
+                "size_delta": None,
+                "size_resting_after": None,
+                "status_after": "",
+                "match_id": str((transaction or {}).get("id") or ""),
+                "contra_order_id": "",
+                "bid_order_id": str((transaction or {}).get("bid_order_id") or ""),
+                "ask_order_id": str((transaction or {}).get("ask_order_id") or ""),
+                "bid_trader_uuid": str((transaction or {}).get("bid_trader_uuid") or ""),
+                "ask_trader_uuid": str((transaction or {}).get("ask_trader_uuid") or ""),
+            },
+            emit_mbp1=False,
+        )
 
     @staticmethod
     def _levels_to_map(levels):
@@ -630,6 +844,8 @@ class TradingSession:
             except Exception as exc:
                 logger.warning(f"SQL save_transaction failed: {exc}")
 
+        self._persist_trade_mbo_event(transaction)
+
         # Append to self.transactions
 
         # Log the transaction creation
@@ -638,7 +854,7 @@ class TradingSession:
         # Return trader IDs involved in the transaction for further processing
         return ask['trader_id'], bid['trader_id'], transaction
 
-    def _apply_fill(self, order_id, fill_amount):
+    def _apply_fill(self, order_id, fill_amount, match_id=None, contra_order_id=None):
         """Apply a partial or full fill to one active order."""
         order = self.all_orders[order_id]
         remaining = float(order['amount']) - float(fill_amount)
@@ -649,11 +865,18 @@ class TradingSession:
         else:
             order['amount'] = remaining
             order['status'] = OrderStatus.ACTIVE.value
-        if self.sql_enabled:
-            try:
-                self.sql_store.save_order(self.id, order)
-            except Exception as exc:
-                logger.warning(f"SQL save_order(_apply_fill) failed: {exc}")
+        self._persist_order_state_change(
+            order,
+            "fill",
+            event_ts=order.get("execution_timestamp") or now(),
+            event_size=fill_amount,
+            size_delta=-abs(float(fill_amount)),
+            size_resting_after=max(0.0, float(order.get("amount", 0) or 0)),
+            match_id=match_id,
+            contra_order_id=contra_order_id,
+            emit_mbp1=True,
+            log_context="_apply_fill",
+        )
 
     def _cash_for_trader(self, trader_id):
         trader_data = self.connected_traders.get(trader_id, {})
@@ -845,11 +1068,16 @@ class TradingSession:
                     )
                     self.all_orders[bid['id']]['status'] = OrderStatus.CANCELLED.value
                     self.all_orders[bid['id']]['cancellation_timestamp'] = now()
-                    if self.sql_enabled:
-                        try:
-                            self.sql_store.save_order(self.id, self.all_orders[bid['id']])
-                        except Exception as exc:
-                            logger.warning(f"SQL save_order(cancel-unaffordable) failed: {exc}")
+                    self._persist_order_state_change(
+                        self.all_orders[bid['id']],
+                        "cancel",
+                        event_ts=self.all_orders[bid['id']].get('cancellation_timestamp') or now(),
+                        event_size=bid.get('amount'),
+                        size_delta=-abs(float(bid.get('amount', 0) or 0)),
+                        size_resting_after=0.0,
+                        emit_mbp1=True,
+                        log_context="cancel-unaffordable",
+                    )
                     bids.pop(0)
                     continue
                 transaction_amount = min(transaction_amount, float(max_affordable))
@@ -868,8 +1096,18 @@ class TradingSession:
                 ask_trader_id,
                 float(transaction_amount),
             )
-            self._apply_fill(ask['id'], transaction_amount)
-            self._apply_fill(bid['id'], transaction_amount)
+            self._apply_fill(
+                ask['id'],
+                transaction_amount,
+                match_id=transaction.get('id'),
+                contra_order_id=bid.get('id'),
+            )
+            self._apply_fill(
+                bid['id'],
+                transaction_amount,
+                match_id=transaction.get('id'),
+                contra_order_id=ask.get('id'),
+            )
             self._apply_cash_flows(bid_trader_id, ask_trader_id, transaction_price, transaction_amount)
             self._apply_share_flows(bid_trader_id, ask_trader_id, transaction_amount)
             self.trader_transaction_counts[ask_trader_id] += 1
@@ -983,11 +1221,16 @@ class TradingSession:
             # Place the order
             placed_order = self.place_order(order.model_dump())  # Converting order to dict for compatibility
             placed_order_id = placed_order.get('id')
-            if self.sql_enabled:
-                try:
-                    self.sql_store.save_order(self.id, placed_order)
-                except Exception as exc:
-                    logger.warning(f"SQL save_order(new) failed: {exc}")
+            self._persist_order_state_change(
+                placed_order,
+                "add",
+                event_ts=placed_order.get("timestamp") or now(),
+                event_size=placed_order.get("amount"),
+                size_delta=abs(float(placed_order.get("amount", 0) or 0)),
+                size_resting_after=placed_order.get("amount"),
+                emit_mbp1=True,
+                log_context="new",
+            )
 
         except ValidationError as e:
             # Handle validation errors, e.g., log them or send a message back to the trader
@@ -1021,11 +1264,16 @@ class TradingSession:
                     )
                 self.all_orders[placed_order_id]['status'] = OrderStatus.CANCELLED.value
                 self.all_orders[placed_order_id]['cancellation_timestamp'] = now()
-                if self.sql_enabled:
-                    try:
-                        self.sql_store.save_order(self.id, self.all_orders[placed_order_id])
-                    except Exception as exc:
-                        logger.warning(f"SQL save_order(ioc-cancel) failed: {exc}")
+                self._persist_order_state_change(
+                    self.all_orders[placed_order_id],
+                    "cancel",
+                    event_ts=self.all_orders[placed_order_id].get('cancellation_timestamp') or now(),
+                    event_size=self.all_orders[placed_order_id].get('amount'),
+                    size_delta=-abs(float(self.all_orders[placed_order_id].get('amount', 0) or 0)),
+                    size_resting_after=0.0,
+                    emit_mbp1=True,
+                    log_context="ioc-cancel",
+                )
         subgroup_data = resp.pop('subgroup_broadcast', None)
         if subgroup_data:
             await self.send_message_to_subgroup(subgroup_data)
@@ -1075,11 +1323,16 @@ class TradingSession:
                 )
             self.all_orders[order_id]['status'] = OrderStatus.CANCELLED.value
             self.all_orders[order_id]['cancellation_timestamp'] = now()
-            if self.sql_enabled:
-                try:
-                    self.sql_store.save_order(self.id, self.all_orders[order_id])
-                except Exception as exc:
-                    logger.warning(f"SQL save_order(cancel) failed: {exc}")
+            self._persist_order_state_change(
+                self.all_orders[order_id],
+                "cancel",
+                event_ts=self.all_orders[order_id].get('cancellation_timestamp') or now(),
+                event_size=self.all_orders[order_id].get('amount'),
+                size_delta=-abs(float(self.all_orders[order_id].get('amount', 0) or 0)),
+                size_resting_after=0.0,
+                emit_mbp1=True,
+                log_context="cancel",
+            )
 
             return {"status": "cancel success", "order": order_id, "respond": True}
 

@@ -110,3 +110,17 @@
 [31m2026-02-16 22:43:53,327 - client_connector.main - CRITICAL - Trader bee5a424-e198-4e7d-b718-fee8f84bffe5 disconnected[0m
 [36m2026-02-16 22:43:53,512 - client_connector.main - INFO - Trader 9b7527c9-2549-4f24-aa8a-28ed83355156 connected to websocket[0m
 [31m2026-02-16 22:43:53,579 - client_connector.main - CRITICAL - Trader 9b7527c9-2549-4f24-aa8a-28ed83355156 disconnected[0m
+[36m2026-02-26 20:32:05,689 - client_connector.main - INFO - Trader 15c53423-9480-4048-8e0d-6ceb5494f7e1 connected to websocket[0m
+[36m2026-02-26 20:32:05,703 - client_connector.main - INFO - Trader bd3da32b-2de7-4e77-b9aa-e8776bd6143d connected to websocket[0m
+[31m2026-02-26 20:34:29,820 - client_connector.main - CRITICAL - Trader bd3da32b-2de7-4e77-b9aa-e8776bd6143d disconnected[0m
+[31m2026-02-26 20:34:30,217 - client_connector.main - CRITICAL - Trader 15c53423-9480-4048-8e0d-6ceb5494f7e1 disconnected[0m
+[36m2026-02-26 20:47:00,404 - client_connector.main - INFO - Trader 67aaebdc-e2d5-4eb4-9263-e27507c535b4 connected to websocket[0m
+[36m2026-02-26 20:47:00,416 - client_connector.main - INFO - Trader f87c62df-2e2c-4028-aa1b-1875963fefd5 connected to websocket[0m
+[36m2026-02-26 20:51:11,628 - client_connector.main - INFO - Trader e0896cb6-3322-411f-82af-daf9b11e6bb7 connected to websocket[0m
+[36m2026-02-26 20:51:11,650 - client_connector.main - INFO - Trader f647801b-e5bd-451c-b0d0-23dd2696904e connected to websocket[0m
+[36m2026-02-26 20:51:17,875 - client_connector.main - INFO - Trader e0896cb6-3322-411f-82af-daf9b11e6bb7 connected to websocket[0m
+[31m2026-02-26 20:51:35,863 - client_connector.main - CRITICAL - Trader e0896cb6-3322-411f-82af-daf9b11e6bb7 disconnected[0m
+[31m2026-02-26 20:51:37,939 - client_connector.main - CRITICAL - Trader e0896cb6-3322-411f-82af-daf9b11e6bb7 disconnected[0m
+[31m2026-02-26 20:51:38,621 - client_connector.main - CRITICAL - Trader f647801b-e5bd-451c-b0d0-23dd2696904e disconnected[0m
+[31m2026-02-26 20:51:40,605 - client_connector.main - CRITICAL - Trader f87c62df-2e2c-4028-aa1b-1875963fefd5 disconnected[0m
+[31m2026-02-26 20:51:41,082 - client_connector.main - CRITICAL - Trader 67aaebdc-e2d5-4eb4-9263-e27507c535b4 disconnected[0m

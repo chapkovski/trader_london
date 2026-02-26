@@ -77,6 +77,9 @@ class SQLStore:
         self.orders = None
         self.transactions = None
         self.messages = None
+        self.mbo_events = None
+        self.trade_events = None
+        self.mbp1_events = None
 
         self._debug_lock = threading.Lock()
         self._schema_lock = threading.Lock()
@@ -85,6 +88,8 @@ class SQLStore:
             "register_traders": {"attempted": 0, "saved": 0, "skipped_disabled": 0, "errors": 0},
             "save_order": {"attempted": 0, "saved": 0, "skipped_disabled": 0, "errors": 0},
             "save_transaction": {"attempted": 0, "saved": 0, "skipped_disabled": 0, "errors": 0},
+            "save_mbo_event": {"attempted": 0, "saved": 0, "skipped_disabled": 0, "errors": 0},
+            "save_mbp1_event": {"attempted": 0, "saved": 0, "skipped_disabled": 0, "errors": 0},
             "save_message": {"attempted": 0, "saved": 0, "skipped_disabled": 0, "errors": 0},
         }
         self._debug_recent_events = []
@@ -152,6 +157,56 @@ class SQLStore:
             Column("created_ts", Float, nullable=False),
         )
 
+        self.mbo_events = Table(
+            "trading_platform_mbo_events",
+            self.metadata,
+            Column("id", Integer, primary_key=True, autoincrement=True),
+            Column("trading_session_uuid", String(255), nullable=False),
+            Column("event_seq", Integer, nullable=False),
+            Column("event_ts", Text, nullable=True),
+            Column("record_kind", String(32), nullable=True),  # order / trade
+            Column("event_type", String(32), nullable=True),  # add / cancel / fill / trade / ...
+            Column("side", String(16), nullable=True),  # bid / ask
+            Column("order_id", String(255), nullable=True),
+            Column("trader_uuid", String(255), nullable=True),
+            Column("price", Float, nullable=True),
+            Column("size", Float, nullable=True),  # event size
+            Column("size_delta", Float, nullable=True),  # signed change in resting size
+            Column("size_resting_after", Float, nullable=True),
+            Column("status_after", String(64), nullable=True),
+            Column("match_id", String(255), nullable=True),
+            Column("contra_order_id", String(255), nullable=True),
+            Column("bid_order_id", String(255), nullable=True),
+            Column("ask_order_id", String(255), nullable=True),
+            Column("bid_trader_uuid", String(255), nullable=True),
+            Column("ask_trader_uuid", String(255), nullable=True),
+            Column("event_json", Text, nullable=True),
+            Column("created_ts", Float, nullable=False),
+        )
+
+        self.mbp1_events = Table(
+            "trading_platform_mbp1_events",
+            self.metadata,
+            Column("id", Integer, primary_key=True, autoincrement=True),
+            Column("trading_session_uuid", String(255), nullable=False),
+            Column("event_seq", Integer, nullable=False),
+            Column("event_ts", Text, nullable=True),
+            Column("source_mbo_event_seq", Integer, nullable=True),
+            Column("source_record_kind", String(32), nullable=True),
+            Column("source_event_type", String(32), nullable=True),
+            Column("source_order_id", String(255), nullable=True),
+            Column("best_bid_px", Float, nullable=True),
+            Column("best_bid_sz", Float, nullable=True),
+            Column("best_bid_ct", Integer, nullable=True),
+            Column("best_ask_px", Float, nullable=True),
+            Column("best_ask_sz", Float, nullable=True),
+            Column("best_ask_ct", Integer, nullable=True),
+            Column("spread", Float, nullable=True),
+            Column("midpoint", Float, nullable=True),
+            Column("event_json", Text, nullable=True),
+            Column("created_ts", Float, nullable=False),
+        )
+
         self.messages = Table(
             "trading_platform_messages",
             self.metadata,
@@ -163,6 +218,9 @@ class SQLStore:
             Column("timestamp", Text, nullable=True),
             Column("created_ts", Float, nullable=False),
         )
+
+        # Alias for code readability while preserving the existing trade table name.
+        self.trade_events = self.transactions
 
     def initialize(self):
         if not SQLALCHEMY_AVAILABLE:
@@ -242,6 +300,8 @@ class SQLStore:
             "traders": self.traders,
             "orders": self.orders,
             "transactions": self.transactions,
+            "mbo_events": self.mbo_events,
+            "mbp1_events": self.mbp1_events,
             "messages": self.messages,
         }
         result = {}
@@ -428,6 +488,146 @@ class SQLStore:
             )
             raise
 
+    def save_mbo_event(self, trading_session_uuid: str, mbo_event: Dict):
+        self._debug_inc("save_mbo_event", "attempted")
+        if not self.enabled:
+            self._debug_inc("save_mbo_event", "skipped_disabled")
+            self._debug_event("save_mbo_event", "skipped_disabled", {"trading_session_uuid": str(trading_session_uuid)})
+            return
+        if not self.ensure_schema():
+            self._debug_inc("save_mbo_event", "errors")
+            self._debug_event(
+                "save_mbo_event",
+                "error",
+                {
+                    "trading_session_uuid": str(trading_session_uuid),
+                    "event_seq": int((mbo_event or {}).get("event_seq") or 0),
+                    "error": "schema bootstrap failed",
+                },
+            )
+            return
+
+        payload = mbo_event or {}
+        row = {
+            "trading_session_uuid": str(trading_session_uuid or ""),
+            "event_seq": int(payload.get("event_seq") or 0),
+            "event_ts": _iso(payload.get("event_ts")),
+            "record_kind": str(payload.get("record_kind") or ""),
+            "event_type": str(payload.get("event_type") or ""),
+            "side": str(payload.get("side") or ""),
+            "order_id": str(payload.get("order_id") or ""),
+            "trader_uuid": str(payload.get("trader_uuid") or ""),
+            "price": float(payload["price"]) if payload.get("price") is not None else None,
+            "size": float(payload["size"]) if payload.get("size") is not None else None,
+            "size_delta": float(payload["size_delta"]) if payload.get("size_delta") is not None else None,
+            "size_resting_after": (
+                float(payload["size_resting_after"]) if payload.get("size_resting_after") is not None else None
+            ),
+            "status_after": str(payload.get("status_after") or ""),
+            "match_id": str(payload.get("match_id") or ""),
+            "contra_order_id": str(payload.get("contra_order_id") or ""),
+            "bid_order_id": str(payload.get("bid_order_id") or ""),
+            "ask_order_id": str(payload.get("ask_order_id") or ""),
+            "bid_trader_uuid": str(payload.get("bid_trader_uuid") or ""),
+            "ask_trader_uuid": str(payload.get("ask_trader_uuid") or ""),
+            "event_json": _json(payload),
+            "created_ts": _now_ts(),
+        }
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(self.mbo_events.insert().values(**row))
+            self._debug_inc("save_mbo_event", "saved")
+            self._debug_event(
+                "save_mbo_event",
+                "saved",
+                {
+                    "trading_session_uuid": row["trading_session_uuid"],
+                    "event_seq": row["event_seq"],
+                    "event_type": row["event_type"],
+                },
+            )
+        except Exception as exc:
+            self._debug_inc("save_mbo_event", "errors")
+            self._debug_event(
+                "save_mbo_event",
+                "error",
+                {
+                    "trading_session_uuid": row["trading_session_uuid"],
+                    "event_seq": row["event_seq"],
+                    "event_type": row["event_type"],
+                    "error": str(exc),
+                },
+            )
+            raise
+
+    def save_mbp1_event(self, trading_session_uuid: str, mbp1_event: Dict):
+        self._debug_inc("save_mbp1_event", "attempted")
+        if not self.enabled:
+            self._debug_inc("save_mbp1_event", "skipped_disabled")
+            self._debug_event("save_mbp1_event", "skipped_disabled", {"trading_session_uuid": str(trading_session_uuid)})
+            return
+        if not self.ensure_schema():
+            self._debug_inc("save_mbp1_event", "errors")
+            self._debug_event(
+                "save_mbp1_event",
+                "error",
+                {
+                    "trading_session_uuid": str(trading_session_uuid),
+                    "event_seq": int((mbp1_event or {}).get("event_seq") or 0),
+                    "error": "schema bootstrap failed",
+                },
+            )
+            return
+
+        payload = mbp1_event or {}
+        row = {
+            "trading_session_uuid": str(trading_session_uuid or ""),
+            "event_seq": int(payload.get("event_seq") or 0),
+            "event_ts": _iso(payload.get("event_ts")),
+            "source_mbo_event_seq": (
+                int(payload["source_mbo_event_seq"]) if payload.get("source_mbo_event_seq") is not None else None
+            ),
+            "source_record_kind": str(payload.get("source_record_kind") or ""),
+            "source_event_type": str(payload.get("source_event_type") or ""),
+            "source_order_id": str(payload.get("source_order_id") or ""),
+            "best_bid_px": float(payload["best_bid_px"]) if payload.get("best_bid_px") is not None else None,
+            "best_bid_sz": float(payload["best_bid_sz"]) if payload.get("best_bid_sz") is not None else None,
+            "best_bid_ct": int(payload["best_bid_ct"]) if payload.get("best_bid_ct") is not None else None,
+            "best_ask_px": float(payload["best_ask_px"]) if payload.get("best_ask_px") is not None else None,
+            "best_ask_sz": float(payload["best_ask_sz"]) if payload.get("best_ask_sz") is not None else None,
+            "best_ask_ct": int(payload["best_ask_ct"]) if payload.get("best_ask_ct") is not None else None,
+            "spread": float(payload["spread"]) if payload.get("spread") is not None else None,
+            "midpoint": float(payload["midpoint"]) if payload.get("midpoint") is not None else None,
+            "event_json": _json(payload),
+            "created_ts": _now_ts(),
+        }
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(self.mbp1_events.insert().values(**row))
+            self._debug_inc("save_mbp1_event", "saved")
+            self._debug_event(
+                "save_mbp1_event",
+                "saved",
+                {
+                    "trading_session_uuid": row["trading_session_uuid"],
+                    "event_seq": row["event_seq"],
+                    "source_event_type": row["source_event_type"],
+                },
+            )
+        except Exception as exc:
+            self._debug_inc("save_mbp1_event", "errors")
+            self._debug_event(
+                "save_mbp1_event",
+                "error",
+                {
+                    "trading_session_uuid": row["trading_session_uuid"],
+                    "event_seq": row["event_seq"],
+                    "source_event_type": row["source_event_type"],
+                    "error": str(exc),
+                },
+            )
+            raise
+
     def save_transaction(
         self,
         trading_session_uuid: str,
@@ -494,6 +694,31 @@ class SQLStore:
                 },
             )
             raise
+
+    def save_trade_event(
+        self,
+        trading_session_uuid: str,
+        bid_trader_uuid: str,
+        ask_trader_uuid: str,
+        bid_order_id: str,
+        ask_order_id: str,
+        price: float,
+        timestamp,
+        transaction_id: str,
+        transaction_json: Dict,
+    ):
+        """Compatibility alias using market-data terminology."""
+        return self.save_transaction(
+            trading_session_uuid=trading_session_uuid,
+            bid_trader_uuid=bid_trader_uuid,
+            ask_trader_uuid=ask_trader_uuid,
+            bid_order_id=bid_order_id,
+            ask_order_id=ask_order_id,
+            price=price,
+            timestamp=timestamp,
+            transaction_id=transaction_id,
+            transaction_json=transaction_json,
+        )
 
     def save_message(
         self,

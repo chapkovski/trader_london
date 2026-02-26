@@ -3684,3 +3684,54 @@
 [33m2026-02-16 22:46:49,433 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
 [31m2026-02-16 22:46:49,433 - traders.human_trader - CRITICAL - Human trader is closing[0m
 [33m2026-02-16 22:46:49,433 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:32:05,638 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:32:05,663 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:32:05,665 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:32:05,665 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[31m2026-02-26 20:33:05,733 - traders.human_trader - CRITICAL - Human trader is closing[0m
+[31m2026-02-26 20:33:05,734 - traders.human_trader - CRITICAL - Human trader is closing[0m
+[33m2026-02-26 20:47:00,293 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:47:00,326 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:47:00,348 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:47:00,348 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:47:00,348 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:47:00,349 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:47:00,350 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:47:00,350 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[31m2026-02-26 20:48:00,443 - traders.human_trader - CRITICAL - Human trader is closing[0m
+[31m2026-02-26 20:48:00,443 - traders.human_trader - CRITICAL - Human trader is closing[0m
+[33m2026-02-26 20:51:11,482 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:51:11,582 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:51:11,638 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:51:11,639 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:51:11,639 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:51:35,919 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:51:36,042 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:51:40,429 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:51:40,430 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:51:45,838 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:51:45,838 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:51:48,674 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:51:48,675 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:51:49,914 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:51:49,914 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:51:50,874 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:51:50,875 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:51:52,943 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:51:52,943 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:52:02,622 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:52:02,622 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:52:05,991 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:52:05,991 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:52:06,649 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:52:06,649 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:52:09,777 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:52:09,777 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:52:10,613 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:52:10,613 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:52:11,637 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[33m2026-02-26 20:52:11,637 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[31m2026-02-26 20:52:11,711 - traders.human_trader - CRITICAL - Human trader is closing[0m
+[33m2026-02-26 20:52:11,711 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
+[31m2026-02-26 20:52:11,712 - traders.human_trader - CRITICAL - Human trader is closing[0m
+[33m2026-02-26 20:52:11,712 - traders.human_trader - WARNING - WebSocket is closed or not set yet. Skipping message send.[0m
