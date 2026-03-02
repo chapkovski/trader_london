@@ -303,6 +303,102 @@ class TradingSession:
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _timestamp_sort_key(value):
+        if value is None:
+            return 0.0
+        if hasattr(value, "timestamp"):
+            try:
+                return float(value.timestamp())
+            except Exception:
+                pass
+        if isinstance(value, (int, float)):
+            return float(value)
+        text = str(value).strip()
+        if not text:
+            return 0.0
+        candidate = text.replace("Z", "+00:00")
+        try:
+            return float(datetime.fromisoformat(candidate).timestamp())
+        except Exception:
+            return 0.0
+
+    def _queue_metrics_for_order(self, order: Dict):
+        side = self._side_label((order or {}).get("order_type"))
+        price = self._as_float_or_none((order or {}).get("price"))
+        order_id = str((order or {}).get("id") or "")
+        if side not in {"bid", "ask"} or price is None or not order_id:
+            return {"queue_position": None, "queue_size": None}
+
+        level_orders = []
+        for active_order in self.active_orders.values():
+            if self._side_label(active_order.get("order_type")) != side:
+                continue
+            active_price = self._as_float_or_none(active_order.get("price"))
+            if active_price is None or abs(active_price - price) > 1e-9:
+                continue
+            active_amount = self._as_float_or_none(active_order.get("amount"))
+            if active_amount is None or active_amount <= 0:
+                continue
+            level_orders.append(active_order)
+
+        if not level_orders:
+            return {"queue_position": None, "queue_size": None}
+
+        level_orders.sort(
+            key=lambda item: (
+                self._timestamp_sort_key(item.get("timestamp")),
+                str(item.get("id") or ""),
+            )
+        )
+
+        queue_position = None
+        for idx, item in enumerate(level_orders, start=1):
+            if str(item.get("id") or "") == order_id:
+                queue_position = idx
+                break
+
+        queue_size = 0.0
+        for item in level_orders:
+            amount = self._as_float_or_none(item.get("amount"))
+            if amount is not None and amount > 0:
+                queue_size += amount
+
+        return {
+            "queue_position": queue_position,
+            "queue_size": queue_size,
+        }
+
+    def _submission_aggressiveness_metrics(self, order_type, order_price):
+        price = self._as_float_or_none(order_price)
+        side = self._side_label(order_type)
+        snapshot = self._current_best_levels_snapshot()
+        best_bid_px = self._as_float_or_none(snapshot.get("best_bid_px"))
+        best_ask_px = self._as_float_or_none(snapshot.get("best_ask_px"))
+        spread = self._as_float_or_none(snapshot.get("spread"))
+
+        aggr_dist_to_opp_touch = None
+        if side == "bid" and best_ask_px is not None and price is not None:
+            aggr_dist_to_opp_touch = best_ask_px - price
+        elif side == "ask" and best_bid_px is not None and price is not None:
+            aggr_dist_to_opp_touch = price - best_bid_px
+
+        aggr_dist_to_opp_touch_over_spread = None
+        if (
+            aggr_dist_to_opp_touch is not None
+            and spread is not None
+            and spread > 0
+        ):
+            aggr_dist_to_opp_touch_over_spread = aggr_dist_to_opp_touch / spread
+
+        return {
+            "submit_best_bid_px": best_bid_px,
+            "submit_best_ask_px": best_ask_px,
+            "submit_spread": spread,
+            "aggr_dist_to_opp_touch": aggr_dist_to_opp_touch,
+            "aggr_dist_to_opp_touch_over_spread": aggr_dist_to_opp_touch_over_spread,
+        }
+
     def _next_mbo_event_seq(self):
         self._mbo_event_seq += 1
         return self._mbo_event_seq
@@ -405,6 +501,7 @@ class TradingSession:
         contra_order_id=None,
         emit_mbp1: bool = True,
         log_context: str = "",
+        extra_event_fields: Dict = None,
     ):
         if not self.sql_enabled:
             return
@@ -452,6 +549,8 @@ class TradingSession:
             "bid_trader_uuid": "",
             "ask_trader_uuid": "",
         }
+        if extra_event_fields:
+            mbo_event.update({k: v for k, v in extra_event_fields.items() if k})
         self._persist_mbo_event(mbo_event, emit_mbp1=emit_mbp1)
 
     def _persist_trade_mbo_event(self, transaction: Dict):
@@ -1191,6 +1290,10 @@ class TradingSession:
             order = Order(status=OrderStatus.BUFFERED.value,
                           session_id=self.id,
                           **data)
+            aggressiveness_metrics = self._submission_aggressiveness_metrics(
+                order.order_type,
+                order.price,
+            )
 
             if int(order.order_type) == int(OrderType.BID):
                 ok, reserved_cash_amount = self._reserve_cash_for_bid(
@@ -1221,6 +1324,11 @@ class TradingSession:
             # Place the order
             placed_order = self.place_order(order.model_dump())  # Converting order to dict for compatibility
             placed_order_id = placed_order.get('id')
+            queue_metrics = self._queue_metrics_for_order(placed_order)
+            order_submission_metrics = {
+                **queue_metrics,
+                **aggressiveness_metrics,
+            }
             self._persist_order_state_change(
                 placed_order,
                 "add",
@@ -1230,6 +1338,7 @@ class TradingSession:
                 size_resting_after=placed_order.get("amount"),
                 emit_mbp1=True,
                 log_context="new",
+                extra_event_fields=order_submission_metrics,
             )
 
         except ValidationError as e:

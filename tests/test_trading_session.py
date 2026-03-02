@@ -2,6 +2,7 @@ import pytest
 import asyncio
 import uuid
 from unittest.mock import AsyncMock, patch
+from unittest.mock import MagicMock
 from main_platform import TradingSession
 from structures import OrderStatus, OrderType, TraderType, Order
 
@@ -201,6 +202,102 @@ async def test_clear_orders_partial_fill_updates_remaining_amount():
     assert "subgroup_broadcast" in result
     assert result["subgroup_broadcast"]["ask_trader"][0]["amount"] == 1
     assert result["subgroup_broadcast"]["bid_trader"][0]["amount"] == 1
+
+
+@pytest.mark.asyncio
+async def test_add_order_mbo_event_contains_queue_position_and_size():
+    session = TradingSession(duration=1)
+    session.active = True
+    session.sql_enabled = True
+    session.sql_store = MagicMock()
+
+    existing_bid_id = uuid.uuid4()
+    session.connected_traders = {
+        "existing_bidder": {"trader_type": TraderType.HUMAN.value, "cash": 1000, "shares": 0},
+        "new_bidder": {"trader_type": TraderType.HUMAN.value, "cash": 1000, "shares": 0},
+    }
+    session.all_orders = {
+        existing_bid_id: {
+            "id": existing_bid_id,
+            "trader_id": "existing_bidder",
+            "order_type": OrderType.BID.value,
+            "price": 100,
+            "amount": 1,
+            "timestamp": "2023-04-01T00:00:01Z",
+            "status": OrderStatus.ACTIVE.value,
+        }
+    }
+
+    response = await session.handle_add_order(
+        {
+            "trader_id": "new_bidder",
+            "order_type": OrderType.BID.value,
+            "price": 100,
+            "amount": 1,
+        }
+    )
+
+    assert response.get("status") != "failed"
+    assert session.sql_store.save_mbo_event.call_count >= 1
+    payload = session.sql_store.save_mbo_event.call_args_list[0].args[1]
+    assert payload["event_type"] == "add"
+    assert payload["queue_position"] == 2
+    assert payload["queue_size"] == 2
+
+
+@pytest.mark.asyncio
+async def test_add_order_mbo_event_contains_continuous_aggressiveness_metrics():
+    session = TradingSession(duration=1)
+    session.active = True
+    session.sql_enabled = True
+    session.sql_store = MagicMock()
+
+    bid_id = uuid.uuid4()
+    ask_id = uuid.uuid4()
+    session.connected_traders = {
+        "bidder_existing": {"trader_type": TraderType.HUMAN.value, "cash": 1000, "shares": 0},
+        "asker_existing": {"trader_type": TraderType.HUMAN.value, "cash": 0, "shares": 10},
+        "bidder_new": {"trader_type": TraderType.HUMAN.value, "cash": 1000, "shares": 0},
+    }
+    session.all_orders = {
+        bid_id: {
+            "id": bid_id,
+            "trader_id": "bidder_existing",
+            "order_type": OrderType.BID.value,
+            "price": 90,
+            "amount": 1,
+            "timestamp": "2023-04-01T00:00:01Z",
+            "status": OrderStatus.ACTIVE.value,
+        },
+        ask_id: {
+            "id": ask_id,
+            "trader_id": "asker_existing",
+            "order_type": OrderType.ASK.value,
+            "price": 110,
+            "amount": 1,
+            "timestamp": "2023-04-01T00:00:02Z",
+            "status": OrderStatus.ACTIVE.value,
+        },
+    }
+
+    response = await session.handle_add_order(
+        {
+            "trader_id": "bidder_new",
+            "order_type": OrderType.BID.value,
+            "price": 105,
+            "amount": 1,
+        }
+    )
+
+    assert response.get("status") != "failed"
+    assert session.sql_store.save_mbo_event.call_count >= 1
+    payload = session.sql_store.save_mbo_event.call_args_list[0].args[1]
+    assert payload["event_type"] == "add"
+    assert payload["submit_best_bid_px"] == 90
+    assert payload["submit_best_ask_px"] == 110
+    assert payload["submit_spread"] == 20
+    assert payload["aggr_dist_to_opp_touch"] == 5
+    assert payload["aggr_dist_to_opp_touch_over_spread"] == pytest.approx(0.25)
 
 
 @pytest.mark.asyncio
