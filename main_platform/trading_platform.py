@@ -579,6 +579,32 @@ class TradingSession:
             emit_mbp1=False,
         )
 
+    def _persist_gamification_ui_event(self, payload: Dict):
+        if not self.sql_enabled:
+            return
+        data = payload or {}
+        trader_uuid = str(data.get("trader_id") or "")
+        event_name = str(data.get("event_name") or "shown")
+        element_type = str(data.get("element_type") or "")
+        element_id = str(data.get("element_id") or "")
+        element_label = str(data.get("element_label") or "")
+        client_ts = data.get("client_ts") or now()
+        server_received_ts = now()
+        try:
+            self.sql_store.save_gamification_ui_event(
+                trading_session_uuid=self.id,
+                trader_uuid=trader_uuid,
+                event_name=event_name,
+                element_type=element_type,
+                payload=data,
+                element_id=element_id,
+                element_label=element_label,
+                client_ts=client_ts,
+                server_received_ts=server_received_ts,
+            )
+        except Exception as exc:
+            logger.warning(f"SQL save_gamification_ui_event failed: {exc}")
+
     @staticmethod
     def _levels_to_map(levels):
         out = {}
@@ -1391,6 +1417,11 @@ class TradingSession:
     async def send_message_to_subgroup(self, message):
         for trader_id, transaction_list in message.items():
             await self.send_message_to_trader(trader_id, {'type': 'update', 'new_transactions': transaction_list})
+
+    @if_active
+    async def handle_gamification_event(self, data: dict):
+        self._persist_gamification_ui_event(data or {})
+        return None
 
     @if_active
     async def handle_cancel_order(self, data: dict):

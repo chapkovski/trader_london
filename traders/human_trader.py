@@ -101,6 +101,11 @@ class HumanTrader(BaseTrader):
             # Handle the case where the order UUID does not exist
             logger.warning(f"Order with UUID {order_uuid} not found.")
 
+    async def handle_gamification_event(self, data):
+        event_payload = dict(data or {})
+        event_payload["action"] = "gamification_event"
+        await self.send_to_trading_system(event_payload)
+
     async def handle_closure(self, data):
         logger.critical('Human trader is closing')
         await self.post_processing_server_message(data)
