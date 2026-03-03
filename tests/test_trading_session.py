@@ -301,6 +301,33 @@ async def test_add_order_mbo_event_contains_continuous_aggressiveness_metrics():
 
 
 @pytest.mark.asyncio
+async def test_handle_gamification_event_persists_ui_event():
+    session = TradingSession(duration=1)
+    session.active = True
+    session.sql_enabled = True
+    session.sql_store = MagicMock()
+
+    await session.handle_gamification_event(
+        {
+            "trader_id": "trader-1",
+            "event_name": "shown",
+            "element_type": "trend_alert",
+            "element_id": "up-streak",
+            "element_label": "up-streak",
+            "client_ts": "2026-03-02T12:00:00Z",
+            "message": "Price went up 4 times in the last 5 ticks!",
+        }
+    )
+
+    assert session.sql_store.save_gamification_ui_event.call_count == 1
+    call_kwargs = session.sql_store.save_gamification_ui_event.call_args.kwargs
+    assert call_kwargs["trading_session_uuid"] == session.id
+    assert call_kwargs["trader_uuid"] == "trader-1"
+    assert call_kwargs["event_name"] == "shown"
+    assert call_kwargs["element_type"] == "trend_alert"
+
+
+@pytest.mark.asyncio
 async def test_immediate_buy_ioc_cascades_and_cancels_remainder():
     session = TradingSession(duration=1)
     session.active = True

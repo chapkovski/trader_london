@@ -77,6 +77,7 @@ class SQLStore:
         self.orders = None
         self.transactions = None
         self.messages = None
+        self.gamification_ui_events = None
         self.mbo_events = None
         self.trade_events = None
         self.mbp1_events = None
@@ -91,6 +92,7 @@ class SQLStore:
             "save_mbo_event": {"attempted": 0, "saved": 0, "skipped_disabled": 0, "errors": 0},
             "save_mbp1_event": {"attempted": 0, "saved": 0, "skipped_disabled": 0, "errors": 0},
             "save_message": {"attempted": 0, "saved": 0, "skipped_disabled": 0, "errors": 0},
+            "save_gamification_ui_event": {"attempted": 0, "saved": 0, "skipped_disabled": 0, "errors": 0},
         }
         self._debug_recent_events = []
         self._debug_max_events = 200
@@ -219,6 +221,22 @@ class SQLStore:
             Column("created_ts", Float, nullable=False),
         )
 
+        self.gamification_ui_events = Table(
+            "trading_platform_gamification_ui_events",
+            self.metadata,
+            Column("id", Integer, primary_key=True, autoincrement=True),
+            Column("trading_session_uuid", String(255), nullable=False),
+            Column("trader_uuid", String(255), nullable=True),
+            Column("event_name", String(64), nullable=True),
+            Column("element_type", String(64), nullable=True),
+            Column("element_id", String(255), nullable=True),
+            Column("element_label", String(255), nullable=True),
+            Column("client_ts", Text, nullable=True),
+            Column("server_received_ts", Text, nullable=True),
+            Column("payload_json", Text, nullable=True),
+            Column("created_ts", Float, nullable=False),
+        )
+
         # Alias for code readability while preserving the existing trade table name.
         self.trade_events = self.transactions
 
@@ -303,6 +321,7 @@ class SQLStore:
             "mbo_events": self.mbo_events,
             "mbp1_events": self.mbp1_events,
             "messages": self.messages,
+            "gamification_ui_events": self.gamification_ui_events,
         }
         result = {}
         if not self.enabled or not self.engine:
@@ -776,6 +795,82 @@ class SQLStore:
                     "trading_session_uuid": str(trading_session_uuid or ""),
                     "message_type": row["message_type"],
                     "recipient_trader_uuid": row["recipient_trader_uuid"],
+                    "error": str(exc),
+                },
+            )
+            raise
+
+    def save_gamification_ui_event(
+        self,
+        trading_session_uuid: str,
+        trader_uuid: str,
+        event_name: str,
+        element_type: str,
+        payload: Dict,
+        *,
+        element_id: Optional[str] = None,
+        element_label: Optional[str] = None,
+        client_ts=None,
+        server_received_ts=None,
+    ):
+        self._debug_inc("save_gamification_ui_event", "attempted")
+        if not self.enabled:
+            self._debug_inc("save_gamification_ui_event", "skipped_disabled")
+            self._debug_event(
+                "save_gamification_ui_event",
+                "skipped_disabled",
+                {"trading_session_uuid": str(trading_session_uuid)},
+            )
+            return
+        if not self.ensure_schema():
+            self._debug_inc("save_gamification_ui_event", "errors")
+            self._debug_event(
+                "save_gamification_ui_event",
+                "error",
+                {
+                    "trading_session_uuid": str(trading_session_uuid),
+                    "trader_uuid": str(trader_uuid or ""),
+                    "error": "schema bootstrap failed",
+                },
+            )
+            return
+
+        row = {
+            "trading_session_uuid": str(trading_session_uuid or ""),
+            "trader_uuid": str(trader_uuid or ""),
+            "event_name": str(event_name or ""),
+            "element_type": str(element_type or ""),
+            "element_id": str(element_id or ""),
+            "element_label": str(element_label or ""),
+            "client_ts": _iso(client_ts),
+            "server_received_ts": _iso(server_received_ts),
+            "payload_json": _json(payload or {}),
+            "created_ts": _now_ts(),
+        }
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(self.gamification_ui_events.insert().values(**row))
+            self._debug_inc("save_gamification_ui_event", "saved")
+            self._debug_event(
+                "save_gamification_ui_event",
+                "saved",
+                {
+                    "trading_session_uuid": row["trading_session_uuid"],
+                    "trader_uuid": row["trader_uuid"],
+                    "event_name": row["event_name"],
+                    "element_type": row["element_type"],
+                },
+            )
+        except Exception as exc:
+            self._debug_inc("save_gamification_ui_event", "errors")
+            self._debug_event(
+                "save_gamification_ui_event",
+                "error",
+                {
+                    "trading_session_uuid": row["trading_session_uuid"],
+                    "trader_uuid": row["trader_uuid"],
+                    "event_name": row["event_name"],
+                    "element_type": row["element_type"],
                     "error": str(exc),
                 },
             )
