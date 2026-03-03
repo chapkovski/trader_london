@@ -1,2 +1,12 @@
+# Python bytecode / cache
 __pycache__/
+**/__pycache__/
 *.py[cod]
+*.pyc
+*.pyo
+*.pyd
+*$py.class
+
+# Runtime logs (keep directory, ignore files)
+logs/*
+!logs/.gitkeep
