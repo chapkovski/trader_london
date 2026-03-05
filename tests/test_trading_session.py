@@ -246,7 +246,7 @@ async def test_add_order_mbo_event_contains_queue_position_and_size():
 
 
 @pytest.mark.asyncio
-async def test_add_order_mbo_event_contains_continuous_aggressiveness_metrics():
+async def test_add_order_mbo_event_excludes_removed_aggressiveness_metrics():
     session = TradingSession(duration=1)
     session.active = True
     session.sql_enabled = True
@@ -293,11 +293,48 @@ async def test_add_order_mbo_event_contains_continuous_aggressiveness_metrics():
     assert session.sql_store.save_mbo_event.call_count >= 1
     payload = session.sql_store.save_mbo_event.call_args_list[0].args[1]
     assert payload["event_type"] == "add"
-    assert payload["submit_best_bid_px"] == 90
-    assert payload["submit_best_ask_px"] == 110
-    assert payload["submit_spread"] == 20
-    assert payload["aggr_dist_to_opp_touch"] == 5
-    assert payload["aggr_dist_to_opp_touch_over_spread"] == pytest.approx(0.25)
+    assert "submit_best_bid_px" not in payload
+    assert "submit_best_ask_px" not in payload
+    assert "submit_spread" not in payload
+    assert "aggr_dist_to_opp_touch" not in payload
+    assert "aggr_dist_to_opp_touch_over_spread" not in payload
+
+
+@pytest.mark.asyncio
+async def test_crossing_buy_executes_at_resting_ask_price_and_marks_buy_aggressor():
+    session = TradingSession(duration=1)
+    session.active = True
+    ask_id = uuid.uuid4()
+    session.connected_traders = {
+        "buyer": {"trader_type": TraderType.HUMAN.value, "cash": 1000, "shares": 0},
+        "seller": {"trader_type": TraderType.HUMAN.value, "cash": 0, "shares": 10},
+    }
+    session.all_orders = {
+        ask_id: {
+            "id": ask_id,
+            "trader_id": "seller",
+            "order_type": OrderType.ASK.value,
+            "price": 15,
+            "amount": 10,
+            "timestamp": "2023-04-01T00:00:10Z",
+            "status": OrderStatus.ACTIVE.value,
+        },
+    }
+
+    response = await session.handle_add_order(
+        {
+            "trader_id": "buyer",
+            "order_type": OrderType.BID.value,
+            "price": 16,
+            "amount": 2,
+        }
+    )
+    assert response.get("status") != "failed"
+    assert len(session._transactions_mem) == 1
+    tx = session._transactions_mem[0]
+    assert tx["price"] == 15
+    assert tx["quantity"] == 2
+    assert tx["aggressor_side"] == "B"
 
 
 @pytest.mark.asyncio

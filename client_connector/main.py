@@ -242,6 +242,38 @@ async def get_trading_session(trading_session_id: str):
     }
 
 
+@app.post("/trading_session/{trading_session_id}/pause")
+async def pause_trading_session(trading_session_id: str):
+    trader_manager = trader_managers.get(trading_session_id)
+    if not trader_manager:
+        raise HTTPException(status_code=404, detail="Trading session not found")
+    result = await trader_manager.trading_session.pause_session()
+    return {
+        "status": "success",
+        "message": "Pause request processed",
+        "data": {
+            "trading_session_uuid": trading_session_id,
+            **result,
+        },
+    }
+
+
+@app.post("/trading_session/{trading_session_id}/resume")
+async def resume_trading_session(trading_session_id: str):
+    trader_manager = trader_managers.get(trading_session_id)
+    if not trader_manager:
+        raise HTTPException(status_code=404, detail="Trading session not found")
+    result = await trader_manager.trading_session.resume_session()
+    return {
+        "status": "success",
+        "message": "Resume request processed",
+        "data": {
+            "trading_session_uuid": trading_session_id,
+            **result,
+        },
+    }
+
+
 @app.websocket("/trader/{trader_uuid}")
 async def websocket_trader_endpoint(websocket: WebSocket, trader_uuid: str):
     await websocket.accept()

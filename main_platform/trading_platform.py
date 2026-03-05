@@ -49,6 +49,9 @@ class TradingSession:
         self.allow_self_trade = bool(allow_self_trade)
 
         self._stop_requested = asyncio.Event()
+        self.paused = False
+        self.paused_at = None
+        self.paused_total_seconds = 0.0
 
         self.id = str(uuid.uuid4())
 
@@ -160,10 +163,49 @@ class TradingSession:
             "duration": self.duration,
             "creation_time": self.creation_time,
             "active": self.active,
+            "paused": self.paused,
+            "paused_at": self.paused_at,
+            "paused_total_seconds": self.paused_total_seconds,
             "start_time": self.start_time,
             "end_time": self.start_time + timedelta(minutes=self.duration),
             "connected_traders": self.connected_traders,
         }
+
+    def _effective_elapsed_seconds(self, current_time):
+        if not self.start_time:
+            return 0.0
+        elapsed = (current_time - self.start_time).total_seconds() - float(self.paused_total_seconds or 0.0)
+        if self.paused and self.paused_at:
+            elapsed -= max(0.0, (current_time - self.paused_at).total_seconds())
+        return max(0.0, elapsed)
+
+    async def pause_session(self):
+        async with self.lock:
+            if not self.active:
+                return {"changed": False, "status": "inactive"}
+            if self.paused:
+                return {"changed": False, "status": "already_paused"}
+            self.paused = True
+            self.paused_at = now()
+
+        await self.send_broadcast({"type": "market_paused"})
+        return {"changed": True, "status": "paused"}
+
+    async def resume_session(self):
+        async with self.lock:
+            if not self.active:
+                return {"changed": False, "status": "inactive"}
+            if not self.paused:
+                return {"changed": False, "status": "already_running"}
+            paused_span = 0.0
+            if self.paused_at:
+                paused_span = max(0.0, (now() - self.paused_at).total_seconds())
+            self.paused_total_seconds = float(self.paused_total_seconds or 0.0) + paused_span
+            self.paused_at = None
+            self.paused = False
+
+        await self.send_broadcast({"type": "market_resumed"})
+        return {"changed": True, "status": "running"}
 
     @property
     def active_orders(self):
@@ -369,35 +411,30 @@ class TradingSession:
             "queue_size": queue_size,
         }
 
-    def _submission_aggressiveness_metrics(self, order_type, order_price):
-        price = self._as_float_or_none(order_price)
-        side = self._side_label(order_type)
-        snapshot = self._current_best_levels_snapshot()
-        best_bid_px = self._as_float_or_none(snapshot.get("best_bid_px"))
-        best_ask_px = self._as_float_or_none(snapshot.get("best_ask_px"))
-        spread = self._as_float_or_none(snapshot.get("spread"))
+    def _determine_match_price_and_aggressor_side(self, bid: Dict, ask: Dict, aggressor_order_id=None):
+        """Return execution price and aggressor side marker ("B" for buy, "S" for sell)."""
+        bid_id = str((bid or {}).get("id") or "")
+        ask_id = str((ask or {}).get("id") or "")
+        aggressor_id = str(aggressor_order_id or "")
+        bid_price = float((bid or {}).get("price") or 0)
+        ask_price = float((ask or {}).get("price") or 0)
 
-        aggr_dist_to_opp_touch = None
-        if side == "bid" and best_ask_px is not None and price is not None:
-            aggr_dist_to_opp_touch = best_ask_px - price
-        elif side == "ask" and best_bid_px is not None and price is not None:
-            aggr_dist_to_opp_touch = price - best_bid_px
+        # Preferred path: explicit incoming order id from handle_add_order.
+        if aggressor_id and aggressor_id == bid_id:
+            return ask_price, "B"
+        if aggressor_id and aggressor_id == ask_id:
+            return bid_price, "S"
 
-        aggr_dist_to_opp_touch_over_spread = None
-        if (
-            aggr_dist_to_opp_touch is not None
-            and spread is not None
-            and spread > 0
-        ):
-            aggr_dist_to_opp_touch_over_spread = aggr_dist_to_opp_touch / spread
+        # Fallback: newer order is treated as aggressor if ids are unavailable.
+        bid_ts = self._timestamp_sort_key((bid or {}).get("timestamp"))
+        ask_ts = self._timestamp_sort_key((ask or {}).get("timestamp"))
+        if bid_ts > ask_ts:
+            return ask_price, "B"
+        if ask_ts > bid_ts:
+            return bid_price, "S"
 
-        return {
-            "submit_best_bid_px": best_bid_px,
-            "submit_best_ask_px": best_ask_px,
-            "submit_spread": spread,
-            "aggr_dist_to_opp_touch": aggr_dist_to_opp_touch,
-            "aggr_dist_to_opp_touch_over_spread": aggr_dist_to_opp_touch_over_spread,
-        }
+        # Deterministic tie-breaker.
+        return ask_price, "B"
 
     def _next_mbo_event_seq(self):
         self._mbo_event_seq += 1
@@ -556,12 +593,14 @@ class TradingSession:
     def _persist_trade_mbo_event(self, transaction: Dict):
         if not self.sql_enabled:
             return
+        aggressor_side = str((transaction or {}).get("aggressor_side") or "").upper()
+        trade_side = "bid" if aggressor_side == "B" else "ask" if aggressor_side == "S" else ""
         self._persist_mbo_event(
             {
                 "record_kind": "trade",
                 "event_type": "trade",
                 "event_ts": (transaction or {}).get("timestamp") or now(),
-                "side": "",
+                "side": trade_side,
                 "order_id": "",
                 "trader_uuid": "",
                 "price": self._as_float_or_none((transaction or {}).get("price")),
@@ -575,6 +614,7 @@ class TradingSession:
                 "ask_order_id": str((transaction or {}).get("ask_order_id") or ""),
                 "bid_trader_uuid": str((transaction or {}).get("bid_trader_uuid") or ""),
                 "ask_trader_uuid": str((transaction or {}).get("ask_trader_uuid") or ""),
+                "aggressor_side": aggressor_side,
             },
             emit_mbp1=False,
         )
@@ -713,16 +753,16 @@ class TradingSession:
         # let's set default type if type is emp[ty
         message['type'] = message.get('type', 'update')
 
-        if message.get('type') == 'closure':
+        if message.get('type') in {'closure', 'market_paused', 'market_resumed'}:
             if self.sql_enabled:
                 try:
                     self.sql_store.save_message(
                         trading_session_uuid=self.id,
-                        message_type="closure",
+                        message_type=str(message.get("type") or "update"),
                         content=message,
                     )
                 except Exception as exc:
-                    logger.warning(f"SQL save_message(closure) failed: {exc}")
+                    logger.warning(f"SQL save_message(control) failed: {exc}")
         else:
             # Broadcast compact deltas instead of full snapshots.
             spread, midpoint = self.get_spread()
@@ -940,7 +980,7 @@ class TradingSession:
         except (TypeError, ValueError):
             return self.default_price
 
-    def create_transaction(self, bid, ask, transaction_price, transaction_amount=None):
+    def create_transaction(self, bid, ask, transaction_price, transaction_amount=None, aggressor_side=""):
         transaction = {
             "id": str(uuid.uuid4()),
             "trading_session_id": str(self.id),
@@ -951,6 +991,7 @@ class TradingSession:
             "quantity": float(transaction_amount or 0),
             "bid_trader_uuid": str(bid.get("trader_id") or ""),
             "ask_trader_uuid": str(ask.get("trader_id") or ""),
+            "aggressor_side": str(aggressor_side or "").upper(),
         }
         self._transactions_mem.append(transaction)
         if self.sql_enabled:
@@ -1146,7 +1187,7 @@ class TradingSession:
             except (TypeError, ValueError):
                 seller['cash'] = trade_value
 
-    async def clear_orders(self):
+    async def clear_orders(self, aggressor_order_id=None):
         """ this goes through order book trying to execute orders """
         # Keep a summary of matches for targeted updates back to traders.
         res = {'transactions': [], 'removed_active_orders': []}
@@ -1173,7 +1214,11 @@ class TradingSession:
             if ask['price'] > bid['price']:
                 break
 
-            transaction_price = (ask['price'] + bid['price']) / 2
+            transaction_price, aggressor_side = self._determine_match_price_and_aggressor_side(
+                bid,
+                ask,
+                aggressor_order_id=aggressor_order_id,
+            )
             transaction_amount = min(float(ask['amount']), float(bid['amount']))
             ask_trader_type = self.connected_traders[ask['trader_id']]['trader_type']
             ask_trader_id = ask.get('trader_id')
@@ -1210,7 +1255,13 @@ class TradingSession:
                     bids.pop(0)
                     continue
 
-            _, _, transaction = self.create_transaction(bid, ask, transaction_price, transaction_amount)
+            _, _, transaction = self.create_transaction(
+                bid,
+                ask,
+                transaction_price,
+                transaction_amount,
+                aggressor_side=aggressor_side,
+            )
             # Release reserved cash for the filled bid quantity at the bid limit price.
             self._release_reserved_cash(
                 bid_trader_id,
@@ -1286,6 +1337,9 @@ class TradingSession:
         message that everything is ok (it's not needed in the current implementation and perhaps we can get rid of this later because it also increase the info load)
 
         """
+        if self.paused:
+            logger.info("Ignoring add_order while session is paused.")
+            return None
 
         immediate = bool(data.pop('immediate', False))
         data['order_type'] = int(data['order_type'])
@@ -1316,10 +1370,6 @@ class TradingSession:
             order = Order(status=OrderStatus.BUFFERED.value,
                           session_id=self.id,
                           **data)
-            aggressiveness_metrics = self._submission_aggressiveness_metrics(
-                order.order_type,
-                order.price,
-            )
 
             if int(order.order_type) == int(OrderType.BID):
                 ok, reserved_cash_amount = self._reserve_cash_for_bid(
@@ -1353,7 +1403,6 @@ class TradingSession:
             queue_metrics = self._queue_metrics_for_order(placed_order)
             order_submission_metrics = {
                 **queue_metrics,
-                **aggressiveness_metrics,
             }
             self._persist_order_state_change(
                 placed_order,
@@ -1382,7 +1431,7 @@ class TradingSession:
                 self._release_reserved_shares(reserved_shares_trader_id, reserved_shares_amount)
             raise
         # lets clear them now
-        resp = await self.clear_orders()
+        resp = await self.clear_orders(aggressor_order_id=placed_order_id)
         # IOC semantics: after immediate matching cycle, cancel any remaining quantity.
         if immediate and placed_order_id and placed_order_id in self.all_orders:
             if self.all_orders[placed_order_id]['status'] == OrderStatus.ACTIVE.value:
@@ -1425,6 +1474,10 @@ class TradingSession:
 
     @if_active
     async def handle_cancel_order(self, data: dict):
+        if self.paused:
+            logger.info("Ignoring cancel_order while session is paused.")
+            return None
+
         order_id = data.get('order_id')
         trader_id = data.get('trader_id')
 
@@ -1530,9 +1583,8 @@ class TradingSession:
         try:
             while not self._stop_requested.is_set():
                 current_time = now()
-                if current_time - self.start_time > timedelta(
-                        minutes=self.duration
-                ):
+                elapsed = self._effective_elapsed_seconds(current_time)
+                if elapsed > float(self.duration) * 60.0:
                     # Time limit reached: stop accepting orders and broadcast closure.
                     logger.critical('Time limit reached, stopping...')
                     self.active = False  # here we stop accepting all incoming requests on placing new orders, cancelling etc.

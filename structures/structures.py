@@ -27,7 +27,7 @@ class TraderCreationData(BaseModel):
         ge=0
     )
     trading_day_duration: int = Field(
-        default=5,
+        default=2,
         title="Trading Day Duration",
         description="Duration of the trading day in minutes",
         gt=0
