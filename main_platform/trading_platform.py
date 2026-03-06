@@ -79,6 +79,7 @@ class TradingSession:
         self._mbo_event_seq = 0
         self._mbp1_event_seq = 0
         self._last_persisted_mbp1_signature = None
+        self.on_session_closure = None
 
     @staticmethod
     def _transaction_ts(transaction):
@@ -1579,6 +1580,14 @@ class TradingSession:
                 if elapsed > float(self.duration) * 60.0:
                     # Time limit reached: stop accepting orders and broadcast closure.
                     logger.critical('Time limit reached, stopping...')
+                    closure_callback = getattr(self, "on_session_closure", None)
+                    if callable(closure_callback):
+                        try:
+                            callback_result = closure_callback()
+                            if asyncio.iscoroutine(callback_result):
+                                await callback_result
+                        except Exception as exc:
+                            logger.error(f"Session closure callback failed: {exc}")
                     self.active = False  # here we stop accepting all incoming requests on placing new orders, cancelling etc.
                     await self.send_broadcast({"type": "closure"})
 

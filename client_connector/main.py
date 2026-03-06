@@ -4,7 +4,6 @@ import aio_pika
 from fastapi import BackgroundTasks, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
 from starlette.websockets import WebSocketState
 
 from client_connector.trader_manager import TraderManager
@@ -47,11 +46,6 @@ trader_managers = {}
 trader_to_session_lookup = {}
 
 
-class DividendApplyPayload(BaseModel):
-    dividend_per_share: float = Field(..., ge=0)
-    trading_day: int = Field(..., ge=1)
-
-
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -63,7 +57,7 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.get("/traders/defaults")
 async def get_trader_defaults():
     schema = TraderCreationData.model_json_schema()
-    hidden_fields = {"allow_self_trade"}
+    hidden_fields = {"allow_self_trade", "num_days", "dividends", "human_trader_params"}
     defaults = {
         field: {
             "default": props.get("default"),
@@ -80,7 +74,10 @@ async def get_trader_defaults():
 
 @app.post("/trading/initiate")
 async def create_trading_session(params: TraderCreationData, background_tasks: BackgroundTasks):
-    trader_manager = TraderManager(params)
+    try:
+        trader_manager = TraderManager(params)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     session_uuid = trader_manager.trading_session.id
 
     all_traders = list(trader_manager.traders.values())
@@ -218,40 +215,24 @@ async def get_trader_info(trader_uuid: str):
         raise HTTPException(status_code=404, detail="Trader not found")
 
     trader = trader_manager.get_trader(trader_uuid)
+    runtime_state = trader_manager.trading_session.connected_traders.get(trader_uuid, {})
+    cash = runtime_state.get("cash", trader.cash)
+    shares = runtime_state.get("shares", trader.shares)
+    reserved_shares = runtime_state.get("reserved_shares", 0.0)
+    total_shares = float(shares or 0.0) + float(reserved_shares or 0.0)
     return {
         "status": "success",
         "message": "Trader found",
         "data": {
-            "cash": trader.cash,
-            "shares": trader.shares,
+            "cash": cash,
+            "shares": total_shares,
+            "available_shares": shares,
+            "reserved_shares": reserved_shares,
             "orders": trader.orders,
-            "delta_cash": trader.delta_cash,
+            "delta_cash": float(cash) - float(trader.initial_cash),
             "initial_cash": trader.initial_cash,
             "initial_shares": trader.initial_shares,
         },
-    }
-
-
-@app.post("/trader/{trader_uuid}/apply_dividend")
-async def apply_trader_dividend(trader_uuid: str, payload: DividendApplyPayload):
-    trader_manager = get_manager_by_trader(trader_uuid)
-    if not trader_manager:
-        raise HTTPException(status_code=404, detail="Trader not found")
-    trader = trader_manager.get_trader(trader_uuid)
-    if not trader:
-        raise HTTPException(status_code=404, detail="Trader not found")
-    try:
-        result = await trader_manager.apply_dividend(
-            trader_uuid=trader_uuid,
-            dividend_per_share=payload.dividend_per_share,
-            trading_day=payload.trading_day,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {
-        "status": "success",
-        "message": "Dividend request processed",
-        "data": result,
     }
 
 
@@ -276,7 +257,7 @@ async def pause_trading_session(trading_session_id: str):
     trader_manager = trader_managers.get(trading_session_id)
     if not trader_manager:
         raise HTTPException(status_code=404, detail="Trading session not found")
-    result = await trader_manager.trading_session.pause_session()
+    result = await trader_manager.pause_session()
     return {
         "status": "success",
         "message": "Pause request processed",

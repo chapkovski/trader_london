@@ -26,6 +26,17 @@ class TraderCreationData(BaseModel):
         description="Number of human traders",
         ge=0
     )
+    num_days: int = Field(
+        default=2,
+        title="Number of Days",
+        description="Number of trading days in the market",
+        ge=1,
+    )
+    dividends: list[float] = Field(
+        default_factory=list,
+        title="Dividend Schedule",
+        description="Per-day dividend per share values; must be at least num_days long",
+    )
     trading_day_duration: int = Field(
         default=2,
         title="Trading Day Duration",
@@ -47,6 +58,11 @@ class TraderCreationData(BaseModel):
         title="Number of Noise Traders",
         description="How many algorithmic noise traders to run in the market",
         ge=0
+    )
+    human_trader_params: list[dict] = Field(
+        default_factory=list,
+        title="Human Trader Params",
+        description="Per-human trader initial balances; one object per human trader",
     )
     initial_midpoint: float = Field(
         default=100,
