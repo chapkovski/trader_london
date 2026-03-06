@@ -11,7 +11,6 @@ from main_platform.utils import CustomEncoder, now, if_active
 from asyncio import Lock
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
-import random
 import math
 from main_platform.sql_store import SQLStore
 
@@ -73,7 +72,6 @@ class TradingSession:
         self._alert_window_size = self.alert_window_size
         self._recent_price_moves = []
         self._last_alert_signature = None
-        self._dividend_announced = False
         self._last_broadcast_book_levels = {"bids": {}, "asks": {}}
         self._last_trader_book_levels = {}
         self._last_trader_order_maps = {}
@@ -768,12 +766,6 @@ class TradingSession:
             spread, midpoint = self.get_spread()
             transactions = self.transactions or []
             alert_message, latest_price = self._build_alert_message(transactions)
-            if not self._dividend_announced and self.start_time:
-                elapsed = (now() - self.start_time).total_seconds()
-                if elapsed >= 20:
-                    dividend = random.choice([0, 8, 16, 24])
-                    alert_message = f"Stock paid a dividend of: ${dividend}"
-                    self._dividend_announced = True
 
             current_book = self.order_book
             bids_delta, next_bids_map = self._compute_levels_delta(

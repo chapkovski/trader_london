@@ -4,6 +4,7 @@ import aio_pika
 from fastapi import BackgroundTasks, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from starlette.websockets import WebSocketState
 
 from client_connector.trader_manager import TraderManager
@@ -44,6 +45,11 @@ app.add_middleware(
 # Runtime in-memory lookup for active sessions/traders.
 trader_managers = {}
 trader_to_session_lookup = {}
+
+
+class DividendApplyPayload(BaseModel):
+    dividend_per_share: float = Field(..., ge=0)
+    trading_day: int = Field(..., ge=1)
 
 
 @app.websocket("/ws")
@@ -223,6 +229,29 @@ async def get_trader_info(trader_uuid: str):
             "initial_cash": trader.initial_cash,
             "initial_shares": trader.initial_shares,
         },
+    }
+
+
+@app.post("/trader/{trader_uuid}/apply_dividend")
+async def apply_trader_dividend(trader_uuid: str, payload: DividendApplyPayload):
+    trader_manager = get_manager_by_trader(trader_uuid)
+    if not trader_manager:
+        raise HTTPException(status_code=404, detail="Trader not found")
+    trader = trader_manager.get_trader(trader_uuid)
+    if not trader:
+        raise HTTPException(status_code=404, detail="Trader not found")
+    try:
+        result = await trader_manager.apply_dividend(
+            trader_uuid=trader_uuid,
+            dividend_per_share=payload.dividend_per_share,
+            trading_day=payload.trading_day,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "status": "success",
+        "message": "Dividend request processed",
+        "data": result,
     }
 
 

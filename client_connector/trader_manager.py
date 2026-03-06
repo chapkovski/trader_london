@@ -30,6 +30,7 @@ class TraderManager:
         params=params.model_dump()
         logger.critical(f"TraderManager params: {params}")
         self.tasks = []
+        self._applied_dividends = {}
 
         cash= params.get("initial_cash", 0)
         shares= params.get("initial_stocks", 0)
@@ -97,6 +98,56 @@ class TraderManager:
 
     def exists(self, trader_uuid):
         return trader_uuid in self.traders
+
+    async def apply_dividend(self, trader_uuid: str, dividend_per_share: float, trading_day: int):
+        trader_id = str(trader_uuid or "").strip()
+        if not trader_id:
+            raise ValueError("Missing trader UUID")
+        trader = self.get_trader(trader_id)
+        if trader is None:
+            raise ValueError("Trader not found")
+
+        day_key = int(trading_day)
+        dividend_per_share_value = max(0.0, float(dividend_per_share or 0.0))
+        key = (trader_id, day_key)
+        existing = self._applied_dividends.get(key)
+        if existing:
+            return {"changed": False, **existing}
+
+        async with self.trading_session.lock:
+            trader_state = self.trading_session.connected_traders.get(trader_id)
+            if trader_state is None:
+                trader_state = {
+                    "trader_type": getattr(trader, "trader_type", "HUMAN"),
+                    "cash": float(getattr(trader, "cash", 0.0) or 0.0),
+                    "shares": float(getattr(trader, "shares", 0.0) or 0.0),
+                    "reserved_cash": 0.0,
+                    "reserved_shares": 0.0,
+                }
+                self.trading_session.connected_traders[trader_id] = trader_state
+
+            shares = float(trader_state.get("shares", getattr(trader, "shares", 0.0)) or 0.0)
+            cash_before = float(trader_state.get("cash", getattr(trader, "cash", 0.0)) or 0.0)
+            dividend_cash = float(dividend_per_share_value) * float(shares)
+            cash_after = float(cash_before) + float(dividend_cash)
+
+            trader_state["shares"] = shares
+            trader_state["cash"] = cash_after
+
+            trader.shares = shares
+            trader.cash = cash_after
+
+        result = {
+            "trader_uuid": trader_id,
+            "trading_day": day_key,
+            "shares": shares,
+            "cash_before_dividend": cash_before,
+            "dividend_per_share": dividend_per_share_value,
+            "dividend_cash": dividend_cash,
+            "cash_after_dividend": cash_after,
+        }
+        self._applied_dividends[key] = result
+        return {"changed": True, **result}
 
     def get_params(self):
         params = self.params.model_dump()
