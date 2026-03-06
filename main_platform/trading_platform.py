@@ -59,6 +59,7 @@ class TradingSession:
 
         self.broadcast_exchange_name = f'broadcast_{self.id}'
         self.queue_name = f'trading_system_queue_{self.id}'
+        self.broadcast_exchange = None
         self.trader_exchange = None
 
         self.connected_traders = {}
@@ -187,8 +188,16 @@ class TradingSession:
             self.paused = True
             self.paused_at = now()
 
-        await self.send_broadcast({"type": "market_paused"})
-        return {"changed": True, "status": "paused"}
+        warning = None
+        try:
+            await self.send_broadcast({"type": "market_paused"})
+        except Exception as exc:
+            warning = str(exc)
+            logger.warning(f"pause_session broadcast failed for session {self.id}: {exc}")
+        result = {"changed": True, "status": "paused"}
+        if warning:
+            result["broadcast_warning"] = warning
+        return result
 
     async def resume_session(self):
         async with self.lock:
@@ -203,8 +212,16 @@ class TradingSession:
             self.paused_at = None
             self.paused = False
 
-        await self.send_broadcast({"type": "market_resumed"})
-        return {"changed": True, "status": "running"}
+        warning = None
+        try:
+            await self.send_broadcast({"type": "market_resumed"})
+        except Exception as exc:
+            warning = str(exc)
+            logger.warning(f"resume_session broadcast failed for session {self.id}: {exc}")
+        result = {"changed": True, "status": "running"}
+        if warning:
+            result["broadcast_warning"] = warning
+        return result
 
     @property
     def active_orders(self):
@@ -247,11 +264,17 @@ class TradingSession:
         # Establish per-session exchanges/queues and start consuming trader messages.
         self.connection = await aio_pika.connect_robust(rabbitmq_url)
         self.channel = await self.connection.channel()
-
-        await self.channel.declare_exchange(self.broadcast_exchange_name, aio_pika.ExchangeType.FANOUT,
-                                            auto_delete=True)
-        self.trader_exchange = await self.channel.declare_exchange(self.queue_name, aio_pika.ExchangeType.DIRECT,
-                                                                   auto_delete=True)
+        # Session-level exchanges should survive transient trader disconnects.
+        self.broadcast_exchange = await self.channel.declare_exchange(
+            self.broadcast_exchange_name,
+            aio_pika.ExchangeType.FANOUT,
+            auto_delete=False,
+        )
+        self.trader_exchange = await self.channel.declare_exchange(
+            self.queue_name,
+            aio_pika.ExchangeType.DIRECT,
+            auto_delete=False,
+        )
         trader_queue = await self.channel.declare_queue(self.queue_name, auto_delete=True)
         await trader_queue.bind(self.trader_exchange)  # bind the queue to the exchange
         await trader_queue.consume(self.on_individual_message)  # Assuming you have a method named on_individual_message
@@ -268,15 +291,32 @@ class TradingSession:
         self._stop_requested.set()
         self.active = False
         try:
-            # Unbind the queue from the exchange (optional, as auto_delete should handle this)
-            trader_queue = await self.channel.get_queue(self.queue_name)
-            await trader_queue.unbind(self.trader_exchange)
+            if self.channel and not self.channel.is_closed:
+                # Unbind the queue from the exchange (optional, as auto_delete should handle this)
+                try:
+                    trader_queue = await self.channel.get_queue(self.queue_name)
+                    if self.trader_exchange:
+                        await trader_queue.unbind(self.trader_exchange)
+                except Exception as exc:
+                    logger.warning(f"Trading System {self.id} queue cleanup warning: {exc}")
+
+                # Explicitly delete session-level exchanges to avoid orphaned entities.
+                for exchange_name in (self.broadcast_exchange_name, self.queue_name):
+                    try:
+                        exchange = await self.channel.get_exchange(exchange_name)
+                        await exchange.delete()
+                    except Exception as exc:
+                        logger.warning(
+                            f"Trading System {self.id} exchange cleanup warning for {exchange_name}: {exc}"
+                        )
 
             # Close the channel and connection
-            await self.channel.close()
-            logger.info(f"Trading System {self.id} channel closed")
-            await self.connection.close()
-            logger.info(f"Trading System {self.id} connection closed")
+            if self.channel and not self.channel.is_closed:
+                await self.channel.close()
+                logger.info(f"Trading System {self.id} channel closed")
+            if self.connection and not self.connection.is_closed:
+                await self.connection.close()
+                logger.info(f"Trading System {self.id} connection closed")
             #     dump transactions and orders to files
             # await dump_transactions_to_csv(self.transactions, generate_file_name(self.id, "transactions"))
             # Dump all_orders to CSV
@@ -810,7 +850,13 @@ class TradingSession:
                 except Exception as exc:
                     logger.warning(f"SQL save_message(broadcast) failed: {exc}")
 
-        exchange = await self.channel.get_exchange(self.broadcast_exchange_name)
+        # Declare/re-declare non-auto-delete exchange to recover from accidental broker-side deletion.
+        exchange = await self.channel.declare_exchange(
+            self.broadcast_exchange_name,
+            aio_pika.ExchangeType.FANOUT,
+            auto_delete=False,
+        )
+        self.broadcast_exchange = exchange
         await exchange.publish(
             aio_pika.Message(body=json.dumps(message, cls=CustomEncoder).encode()),
             routing_key=''  # routing_key is typically ignored in FANOUT exchanges

@@ -319,8 +319,8 @@ async def websocket_trader_endpoint(websocket: WebSocket, trader_uuid: str):
     except WebSocketDisconnect:
         logger.critical(f"Trader {trader_uuid} disconnected")
     except asyncio.CancelledError:
-        logger.warning("Task cancelled")
-        await trader_manager.cleanup()
+        logger.warning(f"WebSocket task cancelled for trader {trader_uuid}")
+        raise
 
 
 @app.get("/traders/list")

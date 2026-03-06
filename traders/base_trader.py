@@ -86,7 +86,7 @@ class BaseTrader:
         # Subscribe to group messages
         broadcast_exchange = await self.channel.declare_exchange(self.broadcast_exchange_name,
                                                                  aio_pika.ExchangeType.FANOUT,
-                                                                 auto_delete=True)
+                                                                 auto_delete=False)
         broadcast_queue = await self.channel.declare_queue("", auto_delete=True)
         await broadcast_queue.bind(broadcast_exchange)
         await broadcast_queue.consume(self.on_message_from_system)
@@ -94,7 +94,7 @@ class BaseTrader:
         # For individual messages
         self.trading_system_exchange = await self.channel.declare_exchange(self.queue_name,
                                                                            aio_pika.ExchangeType.DIRECT,
-                                                                           auto_delete=True)
+                                                                           auto_delete=False)
         trader_queue = await self.channel.declare_queue(
             self.trader_queue_name,
             auto_delete=True
