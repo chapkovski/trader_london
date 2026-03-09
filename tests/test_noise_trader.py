@@ -12,6 +12,7 @@ def test_initialization(noise_trader):
     assert noise_trader.max_orders_per_minute == 3
     assert noise_trader.initial_midpoint == 100
     assert noise_trader.initial_spread == 10
+    assert noise_trader.start_second == 5
     assert noise_trader.trader_type == TraderType.NOISE
 
 

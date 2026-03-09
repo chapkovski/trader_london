@@ -53,6 +53,12 @@ class TraderCreationData(BaseModel):
         description="Capped Poisson intensity for the single noise trader (0..max orders each minute)",
         ge=0
     )
+    noise_trader_start_second: int = Field(
+        default=5,
+        title="Noise Trader Start Second",
+        description="Second within each trading day when noise traders may begin acting",
+        ge=0
+    )
     num_noise_traders: int = Field(
         default=1,
         title="Number of Noise Traders",

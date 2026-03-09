@@ -14,6 +14,7 @@ class NoiseTrader(BaseTrader):
         max_orders_per_minute: int,
         initial_midpoint: float = 100,
         initial_spread: float = 10,
+        start_second: float = 5,
         cash: float = 0,
         shares: float = 0,
     ):
@@ -24,6 +25,7 @@ class NoiseTrader(BaseTrader):
         self.max_orders_per_minute = max(0, int(max_orders_per_minute or 0))
         self.initial_midpoint = float(initial_midpoint)
         self.initial_spread = max(0.0001, float(initial_spread or 10))
+        self.start_second = max(0.0, float(start_second or 0))
         self._initial_orders_seeded = False
 
     @staticmethod
@@ -163,6 +165,15 @@ class NoiseTrader(BaseTrader):
         """
         while not self._stop_requested.is_set():
             try:
+                trading_session = self.trading_session
+                if trading_session is not None and not trading_session.is_noise_trader_window_open():
+                    if await self._sleep_or_stop(0.5):
+                        break
+                    continue
+
+                if not self._initial_orders_seeded:
+                    await self.seed_initial_orders()
+
                 number_of_orders = self.orders_for_next_minute()
                 if number_of_orders <= 0:
                     if await self._sleep_or_stop(60):

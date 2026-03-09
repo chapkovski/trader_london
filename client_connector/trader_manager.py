@@ -58,6 +58,7 @@ class TraderManager:
                 max_orders_per_minute=params.get("max_orders_per_minute", 3),
                 initial_midpoint=params.get("initial_midpoint", 100),
                 initial_spread=params.get("initial_spread", 10),
+                start_second=params.get("noise_trader_start_second", 5),
                 cash=cash,
                 shares=shares,
             )
@@ -82,6 +83,7 @@ class TraderManager:
             alert_window_size=params.get("alert_window_size", 5),
             day_duration_minutes=self.trading_day_duration,
             num_days=self.num_days,
+            noise_trader_start_second=params.get("noise_trader_start_second", 5),
         )
         self.trading_session.on_session_closure = self.apply_remaining_dividends
 
@@ -94,9 +96,6 @@ class TraderManager:
         for trader_id, trader in self.traders.items():
             await trader.initialize()
             await trader.connect_to_session(trading_session_uuid=self.trading_session.id)
-
-        for trader in self.noise_traders:
-            await trader.seed_initial_orders()
 
         await self.trading_session.send_broadcast({"content": "Market is open"})
 

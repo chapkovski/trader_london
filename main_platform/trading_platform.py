@@ -38,6 +38,7 @@ class TradingSession:
         alert_window_size=5,
         day_duration_minutes=1,
         num_days=None,
+        noise_trader_start_second=5,
     ):
         self.active = False
         self.sql_enabled = SQL_ENABLED
@@ -49,6 +50,7 @@ class TradingSession:
         self.day_duration_minutes = max(1, int(day_duration_minutes or 1))
         inferred_num_days = max(1, int(round(float(self.duration) / float(self.day_duration_minutes))))
         self.num_days = max(1, int(num_days or inferred_num_days))
+        self.noise_trader_start_second = max(0.0, float(noise_trader_start_second or 0))
 
         self._stop_requested = asyncio.Event()
         self.paused = False
@@ -165,6 +167,17 @@ class TradingSession:
         elapsed_seconds = self._effective_elapsed_seconds(now())
         day = int(elapsed_seconds // (float(self.day_duration_minutes) * 60.0)) + 1
         return max(1, min(day, int(self.num_days)))
+
+    def seconds_into_current_day(self, current_time=None):
+        current_time = current_time or now()
+        elapsed_seconds = self._effective_elapsed_seconds(current_time)
+        day_seconds = float(self.day_duration_minutes) * 60.0
+        if day_seconds <= 0:
+            return 0.0
+        return max(0.0, elapsed_seconds % day_seconds)
+
+    def is_noise_trader_window_open(self, current_time=None):
+        return self.seconds_into_current_day(current_time) >= float(self.noise_trader_start_second or 0.0)
 
     @property
     def mid_price(self) -> float:
@@ -463,6 +476,39 @@ class TradingSession:
             "queue_position": queue_position,
             "queue_size": queue_size,
         }
+
+    def _would_order_cross_book(self, order: Dict):
+        side = int((order or {}).get("order_type") or 0)
+        price = self._as_float_or_none((order or {}).get("price"))
+        if price is None:
+            return False
+        if side == int(OrderType.BID):
+            asks = [active for active in self.active_orders.values() if active.get("order_type") == OrderType.ASK]
+            if not asks:
+                return False
+            best_ask = min(
+                asks,
+                key=lambda item: (
+                    self._as_float_or_none(item.get("price")) if self._as_float_or_none(item.get("price")) is not None else math.inf,
+                    self._timestamp_sort_key(item.get("timestamp")),
+                ),
+            )
+            best_ask_price = self._as_float_or_none(best_ask.get("price"))
+            return best_ask_price is not None and price >= best_ask_price
+        if side == int(OrderType.ASK):
+            bids = [active for active in self.active_orders.values() if active.get("order_type") == OrderType.BID]
+            if not bids:
+                return False
+            best_bid = max(
+                bids,
+                key=lambda item: (
+                    self._as_float_or_none(item.get("price")) if self._as_float_or_none(item.get("price")) is not None else -math.inf,
+                    -self._timestamp_sort_key(item.get("timestamp")),
+                ),
+            )
+            best_bid_price = self._as_float_or_none(best_bid.get("price"))
+            return best_bid_price is not None and price <= best_bid_price
+        return False
 
     def _determine_match_price_and_aggressor_side(self, bid: Dict, ask: Dict, aggressor_order_id=None):
         """Return execution price and aggressor side marker ("B" for buy, "S" for sell)."""
@@ -1458,6 +1504,7 @@ class TradingSession:
                 data['price'] = max(1, int(round(float(self.default_price))))
 
         placed_order_id = None
+        add_event_persisted = False
         reserved_cash_amount = 0.0
         reserved_cash_trader_id = None
         reserved_shares_amount = 0.0
@@ -1502,21 +1549,23 @@ class TradingSession:
             # Place the order
             placed_order = self.place_order(order.model_dump())  # Converting order to dict for compatibility
             placed_order_id = placed_order.get('id')
-            queue_metrics = self._queue_metrics_for_order(placed_order)
-            order_submission_metrics = {
-                **queue_metrics,
-            }
-            self._persist_order_state_change(
-                placed_order,
-                "add",
-                event_ts=placed_order.get("timestamp") or now(),
-                event_size=placed_order.get("amount"),
-                size_delta=abs(float(placed_order.get("amount", 0) or 0)),
-                size_resting_after=placed_order.get("amount"),
-                emit_mbp1=True,
-                log_context="new",
-                extra_event_fields=order_submission_metrics,
-            )
+            if not self._would_order_cross_book(placed_order):
+                queue_metrics = self._queue_metrics_for_order(placed_order)
+                order_submission_metrics = {
+                    **queue_metrics,
+                }
+                self._persist_order_state_change(
+                    placed_order,
+                    "add",
+                    event_ts=placed_order.get("timestamp") or now(),
+                    event_size=placed_order.get("amount"),
+                    size_delta=abs(float(placed_order.get("amount", 0) or 0)),
+                    size_resting_after=placed_order.get("amount"),
+                    emit_mbp1=True,
+                    log_context="new",
+                    extra_event_fields=order_submission_metrics,
+                )
+                add_event_persisted = True
 
         except ValidationError as e:
             # Handle validation errors, e.g., log them or send a message back to the trader
@@ -1534,6 +1583,27 @@ class TradingSession:
             raise
         # lets clear them now
         resp = await self.clear_orders(aggressor_order_id=placed_order_id)
+        if (
+            not add_event_persisted
+            and not immediate
+            and placed_order_id
+            and placed_order_id in self.all_orders
+            and self.all_orders[placed_order_id]['status'] == OrderStatus.ACTIVE.value
+        ):
+            resting_order = self.all_orders[placed_order_id]
+            queue_metrics = self._queue_metrics_for_order(resting_order)
+            self._persist_order_state_change(
+                resting_order,
+                "add",
+                event_ts=resting_order.get("timestamp") or now(),
+                event_size=resting_order.get("amount"),
+                size_delta=abs(float(resting_order.get("amount", 0) or 0)),
+                size_resting_after=resting_order.get("amount"),
+                emit_mbp1=True,
+                log_context="new-post-match",
+                extra_event_fields=queue_metrics,
+            )
+            add_event_persisted = True
         # IOC semantics: after immediate matching cycle, cancel any remaining quantity.
         if immediate and placed_order_id and placed_order_id in self.all_orders:
             if self.all_orders[placed_order_id]['status'] == OrderStatus.ACTIVE.value:
