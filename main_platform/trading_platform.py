@@ -1356,21 +1356,33 @@ class TradingSession:
             bid_trader_id = bid.get('trader_id')
             if ask_trader_id == bid_trader_id:
                 resting_order = ask
+                incoming_order = bid if str(aggressor_order_id or "") == str(bid.get('id') or "") else ask
                 if str(aggressor_order_id or "") == str(ask.get('id') or ""):
                     resting_order = bid
+                    incoming_order = ask
                 elif str(aggressor_order_id or "") == str(bid.get('id') or ""):
                     resting_order = ask
+                    incoming_order = bid
                 elif ask.get('timestamp') and bid.get('timestamp'):
                     resting_order = ask if ask['timestamp'] <= bid['timestamp'] else bid
+                    incoming_order = bid if str(resting_order.get('id') or "") == str(ask.get('id') or "") else ask
                 logger.warning(
-                    f"Cancelling resting self-cross order {resting_order.get('id')} for trader {ask_trader_id}"
+                    f"Cancelling self-cross orders resting={resting_order.get('id')} incoming={incoming_order.get('id')} for trader {ask_trader_id}"
                 )
                 self._cancel_active_order(resting_order, log_context="cancel-self-cross")
+                if str(incoming_order.get('id') or "") != str(resting_order.get('id') or ""):
+                    self._cancel_active_order(incoming_order, log_context="cancel-self-cross-incoming")
                 if str(resting_order.get('id') or "") == str(ask.get('id') or ""):
                     asks.pop(0)
                 else:
                     bids.pop(0)
                 res['removed_active_orders'].append(str(resting_order.get('id') or ""))
+                if str(incoming_order.get('id') or "") != str(resting_order.get('id') or ""):
+                    if str(incoming_order.get('id') or "") == str(ask.get('id') or ""):
+                        asks.pop(0)
+                    else:
+                        bids.pop(0)
+                    res['removed_active_orders'].append(str(incoming_order.get('id') or ""))
                 continue
 
             # Guarantee non-negative cash by limiting buy fills to affordable amount.
