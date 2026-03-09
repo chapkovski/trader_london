@@ -1600,18 +1600,48 @@ class TradingSession:
             'reserved_cash': 0.0,
             'reserved_shares': 0.0,
         }
-        # Reset delta baselines for this trader (important on websocket reconnect).
-        self._last_trader_book_levels[trader_id] = {"bids": {}, "asks": {}}
-        self._last_trader_order_maps[trader_id] = {}
-        self._last_trader_balances[trader_id] = {}
+        current_book = self.order_book
+        current_trader_orders = self.get_active_orders_for_trader(trader_id)
+        current_balances = {
+            "cash": self._cash_for_trader(trader_id),
+            "shares": self._shares_for_trader(trader_id),
+            "reserved_cash": self._reserved_cash_for_trader(trader_id),
+            "available_cash": self._available_cash_for_trader(trader_id),
+            "reserved_shares": self._reserved_shares_for_trader(trader_id),
+            "available_shares": self._available_shares_for_trader(trader_id),
+        }
+        # Seed trader-specific baselines to the current snapshot so subsequent updates stay incremental.
+        self._last_trader_book_levels[trader_id] = {
+            "bids": self._levels_to_map(current_book.get("bids") or []),
+            "asks": self._levels_to_map(current_book.get("asks") or []),
+        }
+        self._last_trader_order_maps[trader_id] = self._orders_to_map(current_trader_orders)
+        self._last_trader_balances[trader_id] = current_balances
 
         logger.info(f"Trader type  {trader_type} id {trader_id} connected.")
         logger.info(f"Total connected traders: {len(self.connected_traders)}")
+        current_price = self._latest_transaction_price(self.transactions or [])
+        spread, midpoint = self.get_spread()
         return dict(
             respond=True,
             trader_id=trader_id,
             message="Registered successfully",
             individual=True,
+            order_book=current_book,
+            trader_orders=current_trader_orders,
+            inventory={
+                "cash": current_balances["cash"],
+                "shares": current_balances["shares"],
+            },
+            reserved_cash=current_balances["reserved_cash"],
+            available_cash=current_balances["available_cash"],
+            reserved_shares=current_balances["reserved_shares"],
+            available_shares=current_balances["available_shares"],
+            transaction_count=int(self.trader_transaction_counts.get(trader_id, 0)),
+            spread=spread,
+            midpoint=midpoint,
+            mid_price=midpoint,
+            current_price=current_price,
             transaction_history=self._full_transaction_history(),
         )
 
