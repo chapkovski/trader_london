@@ -99,13 +99,6 @@ class TraderCreationData(BaseModel):
         description="Y recent ticks used for rolling alert checks (X out of Y)",
         ge=1
     )
-    allow_self_trade: bool = Field(
-        default=True,
-        title="Allow Self Trade",
-        description="Allow a human trader to match against their own orders"
-    )
-
-
 class ActionType(str, Enum):
     POST_NEW_ORDER = 'add_order'
     CANCEL_ORDER = 'cancel_order'

@@ -80,7 +80,6 @@ class TraderManager:
             duration=self.trading_day_duration * self.num_days,
             alert_streak_frequency=params.get("alert_streak_frequency", 4),
             alert_window_size=params.get("alert_window_size", 5),
-            allow_self_trade=params.get("allow_self_trade", True),
             day_duration_minutes=self.trading_day_duration,
             num_days=self.num_days,
         )

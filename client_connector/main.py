@@ -57,7 +57,7 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.get("/traders/defaults")
 async def get_trader_defaults():
     schema = TraderCreationData.model_json_schema()
-    hidden_fields = {"allow_self_trade", "num_days", "dividends", "human_trader_params"}
+    hidden_fields = {"num_days", "dividends", "human_trader_params"}
     defaults = {
         field: {
             "default": props.get("default"),

@@ -36,7 +36,6 @@ class TradingSession:
         default_price=1000,
         alert_streak_frequency=4,
         alert_window_size=5,
-        allow_self_trade=False,
         day_duration_minutes=1,
         num_days=None,
     ):
@@ -47,7 +46,6 @@ class TradingSession:
         self.default_price = default_price
         self.alert_streak_frequency = max(1, int(alert_streak_frequency or 1))
         self.alert_window_size = max(1, int(alert_window_size or 5))
-        self.allow_self_trade = bool(allow_self_trade)
         self.day_duration_minutes = max(1, int(day_duration_minutes or 1))
         inferred_num_days = max(1, int(round(float(self.duration) / float(self.day_duration_minutes))))
         self.num_days = max(1, int(num_days or inferred_num_days))
@@ -1243,6 +1241,38 @@ class TradingSession:
             except (TypeError, ValueError):
                 seller['cash'] = trade_value
 
+    def _cancel_active_order(self, order: Dict, log_context="cancel"):
+        order_id = order.get('id')
+        if order_id not in self.all_orders:
+            return
+        order_state = self.all_orders[order_id]
+        if order_state.get('status') != OrderStatus.ACTIVE.value:
+            return
+        trader_id = order_state.get('trader_id')
+        amount = float(order_state.get('amount', 0) or 0)
+        if int(order_state.get('order_type')) == int(OrderType.BID):
+            self._release_reserved_cash(
+                trader_id,
+                float(order_state.get('price', 0) or 0) * amount,
+            )
+        elif int(order_state.get('order_type')) == int(OrderType.ASK):
+            self._release_reserved_shares(
+                trader_id,
+                amount,
+            )
+        order_state['status'] = OrderStatus.CANCELLED.value
+        order_state['cancellation_timestamp'] = now()
+        self._persist_order_state_change(
+            order_state,
+            "cancel",
+            event_ts=order_state.get('cancellation_timestamp') or now(),
+            event_size=order_state.get('amount'),
+            size_delta=-abs(float(order_state.get('amount', 0) or 0)),
+            size_resting_after=0.0,
+            emit_mbp1=True,
+            log_context=log_context,
+        )
+
     async def clear_orders(self, aggressor_order_id=None):
         """ this goes through order book trying to execute orders """
         # Keep a summary of matches for targeted updates back to traders.
@@ -1276,12 +1306,26 @@ class TradingSession:
                 aggressor_order_id=aggressor_order_id,
             )
             transaction_amount = min(float(ask['amount']), float(bid['amount']))
-            ask_trader_type = self.connected_traders[ask['trader_id']]['trader_type']
             ask_trader_id = ask.get('trader_id')
             bid_trader_id = bid.get('trader_id')
-            if (not self.allow_self_trade) and ask_trader_type == TraderType.HUMAN.value and ask_trader_id == bid_trader_id:
-                logger.warning(f'Blocking self-execution for trader {ask_trader_id}')
-                break
+            if ask_trader_id == bid_trader_id:
+                resting_order = ask
+                if str(aggressor_order_id or "") == str(ask.get('id') or ""):
+                    resting_order = bid
+                elif str(aggressor_order_id or "") == str(bid.get('id') or ""):
+                    resting_order = ask
+                elif ask.get('timestamp') and bid.get('timestamp'):
+                    resting_order = ask if ask['timestamp'] <= bid['timestamp'] else bid
+                logger.warning(
+                    f"Cancelling resting self-cross order {resting_order.get('id')} for trader {ask_trader_id}"
+                )
+                self._cancel_active_order(resting_order, log_context="cancel-self-cross")
+                if str(resting_order.get('id') or "") == str(ask.get('id') or ""):
+                    asks.pop(0)
+                else:
+                    bids.pop(0)
+                res['removed_active_orders'].append(str(resting_order.get('id') or ""))
+                continue
 
             # Guarantee non-negative cash by limiting buy fills to affordable amount.
             buyer_cash = self._cash_for_trader(bid_trader_id)
@@ -1562,28 +1606,7 @@ class TradingSession:
                 return {"status": "failed", "reason": "Order is not active"}
 
             # Cancel the order
-            if int(existing_order.get('order_type')) == int(OrderType.BID):
-                self._release_reserved_cash(
-                    trader_id,
-                    float(existing_order.get('price', 0)) * float(existing_order.get('amount', 0)),
-                )
-            elif int(existing_order.get('order_type')) == int(OrderType.ASK):
-                self._release_reserved_shares(
-                    trader_id,
-                    float(existing_order.get('amount', 0)),
-                )
-            self.all_orders[order_id]['status'] = OrderStatus.CANCELLED.value
-            self.all_orders[order_id]['cancellation_timestamp'] = now()
-            self._persist_order_state_change(
-                self.all_orders[order_id],
-                "cancel",
-                event_ts=self.all_orders[order_id].get('cancellation_timestamp') or now(),
-                event_size=self.all_orders[order_id].get('amount'),
-                size_delta=-abs(float(self.all_orders[order_id].get('amount', 0) or 0)),
-                size_resting_after=0.0,
-                emit_mbp1=True,
-                log_context="cancel",
-            )
+            self._cancel_active_order(existing_order, log_context="cancel")
 
             return {"status": "cancel success", "order": order_id, "respond": True}
 
