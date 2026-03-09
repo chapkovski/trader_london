@@ -37,6 +37,8 @@ class TradingSession:
         alert_streak_frequency=4,
         alert_window_size=5,
         allow_self_trade=False,
+        day_duration_minutes=1,
+        num_days=None,
     ):
         self.active = False
         self.sql_enabled = SQL_ENABLED
@@ -46,6 +48,9 @@ class TradingSession:
         self.alert_streak_frequency = max(1, int(alert_streak_frequency or 1))
         self.alert_window_size = max(1, int(alert_window_size or 5))
         self.allow_self_trade = bool(allow_self_trade)
+        self.day_duration_minutes = max(1, int(day_duration_minutes or 1))
+        inferred_num_days = max(1, int(round(float(self.duration) / float(self.day_duration_minutes))))
+        self.num_days = max(1, int(num_days or inferred_num_days))
 
         self._stop_requested = asyncio.Event()
         self.paused = False
@@ -151,6 +156,17 @@ class TradingSession:
     @property
     def transactions(self):
         return self._transactions_mem
+
+    def _full_transaction_history(self):
+        """Full in-memory session history ordered by timestamp."""
+        history = [dict(tx) for tx in (self.transactions or [])]
+        history.sort(key=self._transaction_ts)
+        return history
+
+    def _current_trading_day(self):
+        elapsed_seconds = self._effective_elapsed_seconds(now())
+        day = int(elapsed_seconds // (float(self.day_duration_minutes) * 60.0)) + 1
+        return max(1, min(day, int(self.num_days)))
 
     @property
     def mid_price(self) -> float:
@@ -1028,6 +1044,7 @@ class TradingSession:
             "timestamp": now(),
             "price": float(transaction_price),
             "quantity": float(transaction_amount or 0),
+            "trading_day": self._current_trading_day(),
             "bid_trader_uuid": str(bid.get("trader_id") or ""),
             "ask_trader_uuid": str(ask.get("trader_id") or ""),
             "aggressor_side": str(aggressor_side or "").upper(),
@@ -1340,6 +1357,7 @@ class TradingSession:
                     'type': 'ask',
                     'amount': transaction_amount,
                     'timestamp': transaction.get('timestamp'),
+                    'trading_day': transaction.get('trading_day'),
                     'transaction_id': transaction.get('id'),
                 }
             )
@@ -1350,6 +1368,7 @@ class TradingSession:
                     'type': 'bid',
                     'amount': transaction_amount,
                     'timestamp': transaction.get('timestamp'),
+                    'trading_day': transaction.get('trading_day'),
                     'transaction_id': transaction.get('id'),
                 }
             )
@@ -1588,7 +1607,13 @@ class TradingSession:
 
         logger.info(f"Trader type  {trader_type} id {trader_id} connected.")
         logger.info(f"Total connected traders: {len(self.connected_traders)}")
-        return dict(respond=True, trader_id=trader_id, message="Registered successfully", individual=True)
+        return dict(
+            respond=True,
+            trader_id=trader_id,
+            message="Registered successfully",
+            individual=True,
+            transaction_history=self._full_transaction_history(),
+        )
 
     async def on_individual_message(self, message):
         incoming_message = json.loads(message.body.decode())

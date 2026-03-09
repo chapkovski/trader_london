@@ -81,6 +81,8 @@ class TraderManager:
             alert_streak_frequency=params.get("alert_streak_frequency", 4),
             alert_window_size=params.get("alert_window_size", 5),
             allow_self_trade=params.get("allow_self_trade", True),
+            day_duration_minutes=self.trading_day_duration,
+            num_days=self.num_days,
         )
         self.trading_session.on_session_closure = self.apply_remaining_dividends
 
@@ -213,14 +215,11 @@ class TraderManager:
                     self.trading_session.connected_traders[trader_id] = trader_state
                 shares_before = float(trader_state.get("shares", 0.0) or 0.0)
                 reserved_shares_before = float(trader_state.get("reserved_shares", 0.0) or 0.0)
-                trader_state["shares"] = 0.0
-                trader_state["reserved_shares"] = 0.0
-                trader.shares = 0.0
                 terminal_settlement[trader_id] = {
                     "shares_before_terminal_settlement": shares_before,
                     "reserved_shares_before_terminal_settlement": reserved_shares_before,
-                    "shares_after_terminal_settlement": 0.0,
-                    "reserved_shares_after_terminal_settlement": 0.0,
+                    "shares_after_terminal_settlement": shares_before,
+                    "reserved_shares_after_terminal_settlement": reserved_shares_before,
                 }
         return {
             "num_days": self.num_days,
