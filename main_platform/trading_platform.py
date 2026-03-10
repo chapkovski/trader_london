@@ -565,6 +565,7 @@ class TradingSession:
         source_record_kind="",
         source_event_type="",
         source_order_id="",
+        trading_day=None,
     ):
         if not self.sql_enabled:
             return
@@ -580,6 +581,7 @@ class TradingSession:
             "source_record_kind": source_record_kind,
             "source_event_type": source_event_type,
             "source_order_id": source_order_id,
+            "trading_day": int(trading_day or self._current_trading_day()),
             **snapshot,
         }
         try:
@@ -596,6 +598,7 @@ class TradingSession:
             source_record_kind=source_mbo_event.get("record_kind") or "",
             source_event_type=source_mbo_event.get("event_type") or "",
             source_order_id=source_mbo_event.get("order_id") or "",
+            trading_day=source_mbo_event.get("trading_day"),
         )
 
     def _persist_mbo_event(self, payload: Dict, emit_mbp1: bool = False):
@@ -604,6 +607,7 @@ class TradingSession:
         event_payload = dict(payload or {})
         event_payload.setdefault("event_seq", self._next_mbo_event_seq())
         event_payload.setdefault("event_ts", now())
+        event_payload.setdefault("trading_day", self._current_trading_day())
         try:
             self.sql_store.save_mbo_event(self.id, event_payload)
         except Exception as exc:
@@ -1445,6 +1449,7 @@ class TradingSession:
                 source_record_kind="trade",
                 source_event_type="trade",
                 source_order_id="",
+                trading_day=transaction.get("trading_day"),
             )
 
             # No need to append the transaction to self.transactions here as it's handled within create_transaction
