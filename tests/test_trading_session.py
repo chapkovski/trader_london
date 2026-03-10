@@ -338,6 +338,45 @@ async def test_crossing_buy_executes_at_resting_ask_price_and_marks_buy_aggresso
 
 
 @pytest.mark.asyncio
+async def test_crossing_trade_emits_single_post_trade_mbp_snapshot():
+    session = TradingSession(duration=1)
+    session.active = True
+    session.sql_enabled = True
+    session.sql_store = MagicMock()
+    ask_id = uuid.uuid4()
+    session.connected_traders = {
+        "buyer": {"trader_type": TraderType.HUMAN.value, "cash": 1000, "shares": 0},
+        "seller": {"trader_type": TraderType.HUMAN.value, "cash": 0, "shares": 10},
+    }
+    session.all_orders = {
+        ask_id: {
+            "id": ask_id,
+            "trader_id": "seller",
+            "order_type": OrderType.ASK.value,
+            "price": 15,
+            "amount": 10,
+            "timestamp": "2023-04-01T00:00:10Z",
+            "status": OrderStatus.ACTIVE.value,
+        },
+    }
+
+    response = await session.handle_add_order(
+        {
+            "trader_id": "buyer",
+            "order_type": OrderType.BID.value,
+            "price": 16,
+            "amount": 2,
+        }
+    )
+
+    assert response.get("status") != "failed"
+    assert session.sql_store.save_mbp1_event.call_count == 1
+    mbp_payload = session.sql_store.save_mbp1_event.call_args.args[1]
+    assert mbp_payload["source_record_kind"] == "trade"
+    assert mbp_payload["source_event_type"] == "trade"
+
+
+@pytest.mark.asyncio
 async def test_handle_gamification_event_persists_ui_event():
     session = TradingSession(duration=1)
     session.active = True

@@ -38,6 +38,7 @@ class BaseTrader:
         self.connection = None
         self.channel = None
         self.trading_session_uuid = None
+        self.trading_session = None
         self.trader_queue_name = f'trader_{self.id}'  # unique queue name based on Trader's UUID
         logger.info(f"Trader queue name: {self.trader_queue_name}")
         self.queue_name = None

@@ -8,6 +8,7 @@ from structures import OrderStatus, OrderType, Order, TraderType
 import asyncio
 import os
 from main_platform.utils import CustomEncoder, now, if_active
+from main_platform.technical import as_float_or_none, as_int_or_none, timestamp_sort_key
 from asyncio import Lock
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
@@ -43,6 +44,8 @@ class TradingSession:
         self.active = False
         self.sql_enabled = SQL_ENABLED
         self.sql_store = SQL_DB
+        self.connection = None
+        self.channel = None
         self.duration = duration
         self.default_price = default_price
         self.alert_streak_frequency = max(1, int(alert_streak_frequency or 1))
@@ -60,6 +63,7 @@ class TradingSession:
         self.id = str(uuid.uuid4())
 
         self.creation_time = now()
+        self.start_time = None
         self.all_orders = {}
 
         self.broadcast_exchange_name = f'broadcast_{self.id}'
@@ -86,6 +90,10 @@ class TradingSession:
         self._mbp1_event_seq = 0
         self._last_persisted_mbp1_signature = None
         self.on_session_closure = None
+
+    @staticmethod
+    def _resource_is_closed(resource):
+        return getattr(resource, "is_closed", False) is True
 
     @staticmethod
     def _transaction_ts(transaction):
@@ -318,7 +326,7 @@ class TradingSession:
         self._stop_requested.set()
         self.active = False
         try:
-            if self.channel and not self.channel.is_closed:
+            if self.channel and not self._resource_is_closed(self.channel):
                 # Unbind the queue from the exchange (optional, as auto_delete should handle this)
                 try:
                     trader_queue = await self.channel.get_queue(self.queue_name)
@@ -338,10 +346,10 @@ class TradingSession:
                         )
 
             # Close the channel and connection
-            if self.channel and not self.channel.is_closed:
+            if self.channel and not self._resource_is_closed(self.channel):
                 await self.channel.close()
                 logger.info(f"Trading System {self.id} channel closed")
-            if self.connection and not self.connection.is_closed:
+            if self.connection and not self._resource_is_closed(self.connection):
                 await self.connection.close()
                 logger.info(f"Trading System {self.id} connection closed")
             #     dump transactions and orders to files
@@ -393,47 +401,9 @@ class TradingSession:
             return "ask"
         return ""
 
-    @staticmethod
-    def _as_float_or_none(value):
-        try:
-            if value is None:
-                return None
-            return float(value)
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _as_int_or_none(value):
-        try:
-            if value is None:
-                return None
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _timestamp_sort_key(value):
-        if value is None:
-            return 0.0
-        if hasattr(value, "timestamp"):
-            try:
-                return float(value.timestamp())
-            except Exception:
-                pass
-        if isinstance(value, (int, float)):
-            return float(value)
-        text = str(value).strip()
-        if not text:
-            return 0.0
-        candidate = text.replace("Z", "+00:00")
-        try:
-            return float(datetime.fromisoformat(candidate).timestamp())
-        except Exception:
-            return 0.0
-
     def _queue_metrics_for_order(self, order: Dict):
         side = self._side_label((order or {}).get("order_type"))
-        price = self._as_float_or_none((order or {}).get("price"))
+        price = as_float_or_none((order or {}).get("price"))
         order_id = str((order or {}).get("id") or "")
         if side not in {"bid", "ask"} or price is None or not order_id:
             return {"queue_position": None, "queue_size": None}
@@ -442,10 +412,10 @@ class TradingSession:
         for active_order in self.active_orders.values():
             if self._side_label(active_order.get("order_type")) != side:
                 continue
-            active_price = self._as_float_or_none(active_order.get("price"))
+            active_price = as_float_or_none(active_order.get("price"))
             if active_price is None or abs(active_price - price) > 1e-9:
                 continue
-            active_amount = self._as_float_or_none(active_order.get("amount"))
+            active_amount = as_float_or_none(active_order.get("amount"))
             if active_amount is None or active_amount <= 0:
                 continue
             level_orders.append(active_order)
@@ -455,7 +425,7 @@ class TradingSession:
 
         level_orders.sort(
             key=lambda item: (
-                self._timestamp_sort_key(item.get("timestamp")),
+                timestamp_sort_key(item.get("timestamp")),
                 str(item.get("id") or ""),
             )
         )
@@ -468,7 +438,7 @@ class TradingSession:
 
         queue_size = 0.0
         for item in level_orders:
-            amount = self._as_float_or_none(item.get("amount"))
+            amount = as_float_or_none(item.get("amount"))
             if amount is not None and amount > 0:
                 queue_size += amount
 
@@ -479,7 +449,7 @@ class TradingSession:
 
     def _would_order_cross_book(self, order: Dict):
         side = int((order or {}).get("order_type") or 0)
-        price = self._as_float_or_none((order or {}).get("price"))
+        price = as_float_or_none((order or {}).get("price"))
         if price is None:
             return False
         if side == int(OrderType.BID):
@@ -489,11 +459,11 @@ class TradingSession:
             best_ask = min(
                 asks,
                 key=lambda item: (
-                    self._as_float_or_none(item.get("price")) if self._as_float_or_none(item.get("price")) is not None else math.inf,
-                    self._timestamp_sort_key(item.get("timestamp")),
+                    as_float_or_none(item.get("price")) if as_float_or_none(item.get("price")) is not None else math.inf,
+                    timestamp_sort_key(item.get("timestamp")),
                 ),
             )
-            best_ask_price = self._as_float_or_none(best_ask.get("price"))
+            best_ask_price = as_float_or_none(best_ask.get("price"))
             return best_ask_price is not None and price >= best_ask_price
         if side == int(OrderType.ASK):
             bids = [active for active in self.active_orders.values() if active.get("order_type") == OrderType.BID]
@@ -502,11 +472,11 @@ class TradingSession:
             best_bid = max(
                 bids,
                 key=lambda item: (
-                    self._as_float_or_none(item.get("price")) if self._as_float_or_none(item.get("price")) is not None else -math.inf,
-                    -self._timestamp_sort_key(item.get("timestamp")),
+                    as_float_or_none(item.get("price")) if as_float_or_none(item.get("price")) is not None else -math.inf,
+                    -timestamp_sort_key(item.get("timestamp")),
                 ),
             )
-            best_bid_price = self._as_float_or_none(best_bid.get("price"))
+            best_bid_price = as_float_or_none(best_bid.get("price"))
             return best_bid_price is not None and price <= best_bid_price
         return False
 
@@ -525,8 +495,8 @@ class TradingSession:
             return bid_price, "S"
 
         # Fallback: newer order is treated as aggressor if ids are unavailable.
-        bid_ts = self._timestamp_sort_key((bid or {}).get("timestamp"))
-        ask_ts = self._timestamp_sort_key((ask or {}).get("timestamp"))
+        bid_ts = timestamp_sort_key((bid or {}).get("timestamp"))
+        ask_ts = timestamp_sort_key((ask or {}).get("timestamp"))
         if bid_ts > ask_ts:
             return ask_price, "B"
         if ask_ts > bid_ts:
@@ -548,8 +518,8 @@ class TradingSession:
         ask_levels = {}
         for order in self.active_orders.values():
             side = self._side_label(order.get("order_type"))
-            price = self._as_float_or_none(order.get("price"))
-            amount = self._as_float_or_none(order.get("amount"))
+            price = as_float_or_none(order.get("price"))
+            amount = as_float_or_none(order.get("amount"))
             if side not in {"bid", "ask"} or price is None or amount is None or amount <= 0:
                 continue
             target = bid_levels if side == "bid" else ask_levels
@@ -587,8 +557,16 @@ class TradingSession:
             snapshot.get("best_ask_ct"),
         )
 
-    def _persist_mbp1_from_mbo(self, source_mbo_event: Dict):
-        if not self.sql_enabled or not source_mbo_event:
+    def _persist_mbp1_snapshot(
+        self,
+        *,
+        event_ts=None,
+        source_mbo_event_seq=None,
+        source_record_kind="",
+        source_event_type="",
+        source_order_id="",
+    ):
+        if not self.sql_enabled:
             return
         snapshot = self._current_best_levels_snapshot()
         signature = self._mbp1_signature(snapshot)
@@ -597,17 +575,28 @@ class TradingSession:
         self._last_persisted_mbp1_signature = signature
         payload = {
             "event_seq": self._next_mbp1_event_seq(),
-            "event_ts": source_mbo_event.get("event_ts") or now(),
-            "source_mbo_event_seq": source_mbo_event.get("event_seq"),
-            "source_record_kind": source_mbo_event.get("record_kind"),
-            "source_event_type": source_mbo_event.get("event_type"),
-            "source_order_id": source_mbo_event.get("order_id"),
+            "event_ts": event_ts or now(),
+            "source_mbo_event_seq": source_mbo_event_seq,
+            "source_record_kind": source_record_kind,
+            "source_event_type": source_event_type,
+            "source_order_id": source_order_id,
             **snapshot,
         }
         try:
             self.sql_store.save_mbp1_event(self.id, payload)
         except Exception as exc:
             logger.warning(f"SQL save_mbp1_event failed: {exc}")
+
+    def _persist_mbp1_from_mbo(self, source_mbo_event: Dict):
+        if not source_mbo_event:
+            return
+        self._persist_mbp1_snapshot(
+            event_ts=source_mbo_event.get("event_ts"),
+            source_mbo_event_seq=source_mbo_event.get("event_seq"),
+            source_record_kind=source_mbo_event.get("record_kind") or "",
+            source_event_type=source_mbo_event.get("event_type") or "",
+            source_order_id=source_mbo_event.get("order_id") or "",
+        )
 
     def _persist_mbo_event(self, payload: Dict, emit_mbp1: bool = False):
         if not self.sql_enabled:
@@ -649,15 +638,15 @@ class TradingSession:
 
         resting_after = size_resting_after
         if resting_after is None:
-            resting_after = self._as_float_or_none((order or {}).get("amount"))
-        price = self._as_float_or_none((order or {}).get("price"))
-        event_size_val = self._as_float_or_none(event_size)
-        size_delta_val = self._as_float_or_none(size_delta)
+            resting_after = as_float_or_none((order or {}).get("amount"))
+        price = as_float_or_none((order or {}).get("price"))
+        event_size_val = as_float_or_none(event_size)
+        size_delta_val = as_float_or_none(size_delta)
         if event_size_val is None:
             if str(event_type) == "add":
                 event_size_val = resting_after
             elif str(event_type) == "cancel":
-                event_size_val = self._as_float_or_none((order or {}).get("amount"))
+                event_size_val = as_float_or_none((order or {}).get("amount"))
             elif str(event_type) == "fill" and size_delta_val is not None:
                 event_size_val = abs(size_delta_val)
         if size_delta_val is None:
@@ -676,7 +665,7 @@ class TradingSession:
             "price": price,
             "size": event_size_val,
             "size_delta": size_delta_val,
-            "size_resting_after": self._as_float_or_none(resting_after),
+            "size_resting_after": as_float_or_none(resting_after),
             "status_after": str((order or {}).get("status") or ""),
             "match_id": str(match_id or ""),
             "contra_order_id": str(contra_order_id or ""),
@@ -691,10 +680,10 @@ class TradingSession:
 
     def _persist_trade_mbo_event(self, transaction: Dict):
         if not self.sql_enabled:
-            return
+            return None
         aggressor_side = str((transaction or {}).get("aggressor_side") or "").upper()
         trade_side = "bid" if aggressor_side == "B" else "ask" if aggressor_side == "S" else ""
-        self._persist_mbo_event(
+        return self._persist_mbo_event(
             {
                 "record_kind": "trade",
                 "event_type": "trade",
@@ -702,8 +691,8 @@ class TradingSession:
                 "side": trade_side,
                 "order_id": "",
                 "trader_uuid": "",
-                "price": self._as_float_or_none((transaction or {}).get("price")),
-                "size": self._as_float_or_none((transaction or {}).get("quantity")),
+                "price": as_float_or_none((transaction or {}).get("price")),
+                "size": as_float_or_none((transaction or {}).get("quantity")),
                 "size_delta": None,
                 "size_resting_after": None,
                 "status_after": "",
@@ -982,6 +971,8 @@ class TradingSession:
             except Exception as exc:
                 logger.warning(f"SQL save_message(trader) failed: {exc}")
         logger.debug(f"Trader {trader_id} current_price={current_price}")
+        if not self.trader_exchange:
+            return
         await self.trader_exchange.publish(
             aio_pika.Message(body=json.dumps(message, cls=CustomEncoder).encode()),
             routing_key=f'trader_{trader_id}'
@@ -1041,9 +1032,9 @@ class TradingSession:
         bids = [order for order in self.active_orders.values() if order['order_type'] == OrderType.BID]
 
         # Sort by price (lowest first for asks), and then by timestamp (oldest first - FIFO)
-        asks.sort(key=lambda x: (x['price'], x['timestamp']))
+        asks.sort(key=lambda x: (x['price'], timestamp_sort_key(x.get('timestamp'))))
         # Sort by price (highest first for bids), and then by timestamp (oldest first)
-        bids.sort(key=lambda x: (-x['price'], x['timestamp']))
+        bids.sort(key=lambda x: (-x['price'], timestamp_sort_key(x.get('timestamp'))))
 
         # Calculate the spread
         if asks and bids:
@@ -1110,7 +1101,9 @@ class TradingSession:
             except Exception as exc:
                 logger.warning(f"SQL save_transaction failed: {exc}")
 
-        self._persist_trade_mbo_event(transaction)
+        trade_mbo_event = self._persist_trade_mbo_event(transaction)
+        if trade_mbo_event:
+            transaction["_trade_mbo_event_seq"] = trade_mbo_event.get("event_seq")
 
         # Append to self.transactions
 
@@ -1140,7 +1133,7 @@ class TradingSession:
             size_resting_after=max(0.0, float(order.get("amount", 0) or 0)),
             match_id=match_id,
             contra_order_id=contra_order_id,
-            emit_mbp1=True,
+            emit_mbp1=False,
             log_context="_apply_fill",
         )
 
@@ -1329,9 +1322,9 @@ class TradingSession:
 
         # Sort by price (lowest first for asks), and then by timestamp (oldest first - FIFO)
         # TODO: remember that this is FIFO. We need to adjust the rule (or make it adjustable in the config) if we want
-        asks.sort(key=lambda x: (x['price'], x['timestamp']))
+        asks.sort(key=lambda x: (x['price'], timestamp_sort_key(x.get('timestamp'))))
         # Sort by price (highest first for bids), and then by timestamp (oldest first)
-        bids.sort(key=lambda x: (-x['price'], x['timestamp']))
+        bids.sort(key=lambda x: (-x['price'], timestamp_sort_key(x.get('timestamp'))))
 
         if not asks or not bids:
             logger.info("No overlapping orders.")
@@ -1446,6 +1439,13 @@ class TradingSession:
             self._apply_share_flows(bid_trader_id, ask_trader_id, transaction_amount)
             self.trader_transaction_counts[ask_trader_id] += 1
             self.trader_transaction_counts[bid_trader_id] += 1
+            self._persist_mbp1_snapshot(
+                event_ts=transaction.get("timestamp") or now(),
+                source_mbo_event_seq=transaction.get("_trade_mbo_event_seq"),
+                source_record_kind="trade",
+                source_event_type="trade",
+                source_order_id="",
+            )
 
             # No need to append the transaction to self.transactions here as it's handled within create_transaction
 

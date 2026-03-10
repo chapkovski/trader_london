@@ -73,6 +73,24 @@ class NoiseTrader(BaseTrader):
         sampled = self._sample_poisson(self.max_orders_per_minute)
         return min(sampled, self.max_orders_per_minute)
 
+    def _window_seconds_remaining(self, trading_session=None) -> float:
+        if trading_session is None:
+            return 60.0
+        day_seconds = max(1.0, float(getattr(trading_session, "day_duration_minutes", 1) or 1) * 60.0)
+        try:
+            elapsed_in_day = float(trading_session.seconds_into_current_day() or 0.0)
+        except Exception:
+            elapsed_in_day = 0.0
+        return max(0.0, day_seconds - elapsed_in_day)
+
+    def orders_for_next_window(self, window_seconds: float) -> int:
+        window_seconds = max(0.0, float(window_seconds or 0.0))
+        if window_seconds <= 0:
+            return 0
+        lam = float(self.max_orders_per_minute) * min(window_seconds, 60.0) / 60.0
+        sampled = self._sample_poisson(lam)
+        return min(sampled, self.max_orders_per_minute)
+
     def _get_best_quotes(self):
         """
         Returns best bid/ask from the aggregated order book levels.
@@ -174,13 +192,19 @@ class NoiseTrader(BaseTrader):
                 if not self._initial_orders_seeded:
                     await self.seed_initial_orders()
 
-                number_of_orders = self.orders_for_next_minute()
-                if number_of_orders <= 0:
-                    if await self._sleep_or_stop(60):
+                window_seconds = self._window_seconds_remaining(trading_session)
+                if window_seconds <= 0:
+                    if await self._sleep_or_stop(0.5):
                         break
                     continue
 
-                offsets = sorted(random.uniform(0, 60) for _ in range(number_of_orders))
+                number_of_orders = self.orders_for_next_window(window_seconds)
+                if number_of_orders <= 0:
+                    if await self._sleep_or_stop(window_seconds):
+                        break
+                    continue
+
+                offsets = sorted(random.uniform(0, window_seconds) for _ in range(number_of_orders))
                 previous_offset = 0.0
                 for offset in offsets:
                     if await self._sleep_or_stop(offset - previous_offset):
@@ -192,7 +216,7 @@ class NoiseTrader(BaseTrader):
 
                 if self._stop_requested.is_set():
                     break
-                if await self._sleep_or_stop(max(0.0, 60.0 - previous_offset)):
+                if await self._sleep_or_stop(max(0.0, window_seconds - previous_offset)):
                     break
 
             except asyncio.CancelledError:

@@ -94,6 +94,7 @@ class TraderManager:
         logger.info(f"Trading session UUID: {self.trading_session.id}")
 
         for trader_id, trader in self.traders.items():
+            trader.trading_session = self.trading_session
             await trader.initialize()
             await trader.connect_to_session(trading_session_uuid=self.trading_session.id)
 
