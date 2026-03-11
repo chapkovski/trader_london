@@ -1314,6 +1314,28 @@ class TradingSession:
             log_context=log_context,
         )
 
+    def _cancel_active_order_without_persist(self, order: Dict):
+        order_id = order.get('id')
+        if order_id not in self.all_orders:
+            return
+        order_state = self.all_orders[order_id]
+        if order_state.get('status') != OrderStatus.ACTIVE.value:
+            return
+        trader_id = order_state.get('trader_id')
+        amount = float(order_state.get('amount', 0) or 0)
+        if int(order_state.get('order_type')) == int(OrderType.BID):
+            self._release_reserved_cash(
+                trader_id,
+                float(order_state.get('price', 0) or 0) * amount,
+            )
+        elif int(order_state.get('order_type')) == int(OrderType.ASK):
+            self._release_reserved_shares(
+                trader_id,
+                amount,
+            )
+        order_state['status'] = OrderStatus.CANCELLED.value
+        order_state['cancellation_timestamp'] = now()
+
     async def clear_orders(self, aggressor_order_id=None):
         """ this goes through order book trying to execute orders """
         # Keep a summary of matches for targeted updates back to traders.
@@ -1366,7 +1388,7 @@ class TradingSession:
                 )
                 self._cancel_active_order(resting_order, log_context="cancel-self-cross")
                 if str(incoming_order.get('id') or "") != str(resting_order.get('id') or ""):
-                    self._cancel_active_order(incoming_order, log_context="cancel-self-cross-incoming")
+                    self._cancel_active_order_without_persist(incoming_order)
                 if str(resting_order.get('id') or "") == str(ask.get('id') or ""):
                     asks.pop(0)
                 else:
