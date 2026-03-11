@@ -377,6 +377,92 @@ async def test_crossing_trade_emits_single_post_trade_mbp_snapshot():
 
 
 @pytest.mark.asyncio
+async def test_self_cross_records_only_resting_cancel_and_final_mbp_snapshot():
+    session = TradingSession(duration=1)
+    session.active = True
+    session.sql_enabled = True
+    session.sql_store = MagicMock()
+
+    bid_7_id = uuid.uuid4()
+    ask_13_id = uuid.uuid4()
+    ask_16_id = uuid.uuid4()
+
+    session.connected_traders = {
+        "self_trader": {"trader_type": TraderType.HUMAN.value, "cash": 1000, "shares": 10, "reserved_cash": 0},
+        "bidder_other": {"trader_type": TraderType.HUMAN.value, "cash": 1000, "shares": 0},
+        "asker_other": {"trader_type": TraderType.HUMAN.value, "cash": 0, "shares": 10},
+    }
+    session.all_orders = {
+        bid_7_id: {
+            "id": bid_7_id,
+            "trader_id": "bidder_other",
+            "order_type": OrderType.BID.value,
+            "price": 7,
+            "amount": 1,
+            "timestamp": "2023-04-01T00:00:01Z",
+            "status": OrderStatus.ACTIVE.value,
+        },
+        ask_13_id: {
+            "id": ask_13_id,
+            "trader_id": "self_trader",
+            "order_type": OrderType.ASK.value,
+            "price": 13,
+            "amount": 1,
+            "timestamp": "2023-04-01T00:00:02Z",
+            "status": OrderStatus.ACTIVE.value,
+        },
+        ask_16_id: {
+            "id": ask_16_id,
+            "trader_id": "asker_other",
+            "order_type": OrderType.ASK.value,
+            "price": 16,
+            "amount": 1,
+            "timestamp": "2023-04-01T00:00:03Z",
+            "status": OrderStatus.ACTIVE.value,
+        },
+    }
+
+    response = await session.handle_add_order(
+        {
+            "trader_id": "self_trader",
+            "order_type": OrderType.BID.value,
+            "price": 15,
+            "amount": 1,
+        }
+    )
+
+    assert response.get("status") != "failed"
+
+    assert session.sql_store.save_mbo_event.call_count == 1
+    mbo_payload = session.sql_store.save_mbo_event.call_args.args[1]
+    assert mbo_payload["event_type"] == "cancel"
+    assert mbo_payload["side"] == "ask"
+    assert str(mbo_payload["order_id"]) == str(ask_13_id)
+    assert mbo_payload["price"] == 13
+
+    assert session.sql_store.save_mbp1_event.call_count == 1
+    mbp_payload = session.sql_store.save_mbp1_event.call_args.args[1]
+    assert mbp_payload["source_record_kind"] == "order"
+    assert mbp_payload["source_event_type"] == "cancel"
+    assert str(mbp_payload["source_order_id"]) == str(ask_13_id)
+    assert mbp_payload["source_mbo_event_seq"] == 1
+    assert mbp_payload["best_bid_px"] == 7
+    assert mbp_payload["best_bid_sz"] == 1
+    assert mbp_payload["best_bid_ct"] == 1
+    assert mbp_payload["best_ask_px"] == 16
+    assert mbp_payload["best_ask_sz"] == 1
+    assert mbp_payload["best_ask_ct"] == 1
+
+    remaining_active = {
+        str(order["id"]): order
+        for order in session.all_orders.values()
+        if order["status"] == OrderStatus.ACTIVE.value
+    }
+    assert set(remaining_active.keys()) == {str(bid_7_id), str(ask_16_id)}
+    assert session.connected_traders["self_trader"]["reserved_cash"] == 0
+
+
+@pytest.mark.asyncio
 async def test_handle_gamification_event_persists_ui_event():
     session = TradingSession(duration=1)
     session.active = True

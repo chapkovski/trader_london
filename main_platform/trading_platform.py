@@ -678,7 +678,7 @@ class TradingSession:
         }
         if extra_event_fields:
             mbo_event.update({k: v for k, v in extra_event_fields.items() if k})
-        self._persist_mbo_event(mbo_event, emit_mbp1=emit_mbp1)
+        return self._persist_mbo_event(mbo_event, emit_mbp1=emit_mbp1)
 
     def _persist_trade_mbo_event(self, transaction: Dict):
         if not self.sql_enabled:
@@ -1282,7 +1282,7 @@ class TradingSession:
             except (TypeError, ValueError):
                 seller['cash'] = trade_value
 
-    def _cancel_active_order(self, order: Dict, log_context="cancel"):
+    def _cancel_active_order(self, order: Dict, log_context="cancel", emit_mbp1: bool = True):
         order_id = order.get('id')
         if order_id not in self.all_orders:
             return
@@ -1303,14 +1303,14 @@ class TradingSession:
             )
         order_state['status'] = OrderStatus.CANCELLED.value
         order_state['cancellation_timestamp'] = now()
-        self._persist_order_state_change(
+        return self._persist_order_state_change(
             order_state,
             "cancel",
             event_ts=order_state.get('cancellation_timestamp') or now(),
             event_size=order_state.get('amount'),
             size_delta=-abs(float(order_state.get('amount', 0) or 0)),
             size_resting_after=0.0,
-            emit_mbp1=True,
+            emit_mbp1=emit_mbp1,
             log_context=log_context,
         )
 
@@ -1386,9 +1386,21 @@ class TradingSession:
                 logger.warning(
                     f"Cancelling self-cross orders resting={resting_order.get('id')} incoming={incoming_order.get('id')} for trader {ask_trader_id}"
                 )
-                self._cancel_active_order(resting_order, log_context="cancel-self-cross")
+                resting_cancel_event = self._cancel_active_order(
+                    resting_order,
+                    log_context="cancel-self-cross",
+                    emit_mbp1=False,
+                )
                 if str(incoming_order.get('id') or "") != str(resting_order.get('id') or ""):
                     self._cancel_active_order_without_persist(incoming_order)
+                self._persist_mbp1_snapshot(
+                    event_ts=now(),
+                    source_mbo_event_seq=(resting_cancel_event or {}).get("event_seq"),
+                    source_record_kind=(resting_cancel_event or {}).get("record_kind") or "order",
+                    source_event_type=(resting_cancel_event or {}).get("event_type") or "cancel",
+                    source_order_id=(resting_cancel_event or {}).get("order_id") or str(resting_order.get('id') or ""),
+                    trading_day=(resting_cancel_event or {}).get("trading_day"),
+                )
                 if str(resting_order.get('id') or "") == str(ask.get('id') or ""):
                     asks.pop(0)
                 else:
