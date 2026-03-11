@@ -248,6 +248,7 @@ async def get_trading_session(trading_session_id: str):
             "trading_session_uuid": trader_manager.trading_session.id,
             "traders": list(trader_manager.traders.keys()),
             "human_traders": [t.get_trader_params_as_dict() for t in trader_manager.human_traders],
+            "last_transaction_price": trader_manager.trading_session.transaction_price,
         },
     }
 
@@ -264,6 +265,7 @@ async def pause_trading_session(trading_session_id: str):
         "data": {
             "trading_session_uuid": trading_session_id,
             **result,
+            "last_transaction_price": trader_manager.trading_session.transaction_price,
         },
     }
 
