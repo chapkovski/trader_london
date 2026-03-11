@@ -571,8 +571,6 @@ class TradingSession:
             return
         snapshot = self._current_best_levels_snapshot()
         signature = self._mbp1_signature(snapshot)
-        if signature == self._last_persisted_mbp1_signature:
-            return
         self._last_persisted_mbp1_signature = signature
         payload = {
             "event_seq": self._next_mbp1_event_seq(),
