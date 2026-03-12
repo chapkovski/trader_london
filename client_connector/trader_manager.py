@@ -33,6 +33,7 @@ class TraderManager:
         self.tasks = []
         self._applied_dividend_days = set()
         self._started = False
+        self._finalized = False
         self.is_simulated = bool(params.get("is_simulated", False))
         self._simulation_rng = random.Random(0)
 
@@ -96,6 +97,22 @@ class TraderManager:
     async def startup(self):
         if self._started:
             return
+        if self.is_simulated:
+            await self.trading_session.initialize_simulated()
+            logger.info(f"Trading session UUID: {self.trading_session.id} (simulated)")
+            for trader in self.traders.values():
+                trader.trading_session = self.trading_session
+                trader.trading_session_uuid = self.trading_session.id
+                await self.trading_session.handle_register_me(
+                    {
+                        "trader_id": trader.id,
+                        "trader_type": trader.trader_type,
+                        "cash": trader.cash,
+                        "shares": trader.shares,
+                    }
+                )
+            self._started = True
+            return
         await self.trading_session.initialize()
         logger.info(f"Trading session UUID: {self.trading_session.id}")
 
@@ -109,6 +126,8 @@ class TraderManager:
 
     async def launch(self):
         await self.startup()
+        if self.is_simulated:
+            return
 
         # Run the session loop and all traders concurrently.
         trading_session_task = asyncio.create_task(self.trading_session.run())
@@ -127,6 +146,32 @@ class TraderManager:
             task.cancel()  # Request cancellation of the task
         await asyncio.gather(*self.tasks, return_exceptions=True)
         self.tasks.clear()  # Clear the list of tasks after cancellation
+
+    async def finalize_session(self):
+        if self._finalized:
+            return {"changed": False, "status": "closed"}
+
+        closure_result = None
+        closure_callback = getattr(self.trading_session, "on_session_closure", None)
+        if callable(closure_callback):
+            closure_result = closure_callback()
+            if asyncio.iscoroutine(closure_result):
+                closure_result = await closure_result
+
+        self.trading_session.active = False
+        warning = None
+        try:
+            await self.trading_session.send_broadcast({"type": "closure"})
+        except Exception as exc:
+            warning = str(exc)
+            logger.warning(f"finalize_session broadcast failed for session {self.trading_session.id}: {exc}")
+
+        await self.cleanup()
+        self._finalized = True
+        result = {"changed": True, "status": "closed", "closure_result": closure_result}
+        if warning:
+            result["broadcast_warning"] = warning
+        return result
 
     def get_trader(self, trader_uuid):
         return self.traders.get(trader_uuid)

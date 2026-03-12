@@ -288,6 +288,23 @@ async def resume_trading_session(trading_session_id: str):
     }
 
 
+@app.post("/trading_session/{trading_session_id}/close")
+async def close_trading_session(trading_session_id: str):
+    trader_manager = trader_managers.get(trading_session_id)
+    if not trader_manager:
+        raise HTTPException(status_code=404, detail="Trading session not found")
+    result = await trader_manager.finalize_session()
+    return {
+        "status": "success",
+        "message": "Close request processed",
+        "data": {
+            "trading_session_uuid": trading_session_id,
+            **result,
+            "last_transaction_price": trader_manager.trading_session.transaction_price,
+        },
+    }
+
+
 @app.websocket("/trader/{trader_uuid}")
 async def websocket_trader_endpoint(websocket: WebSocket, trader_uuid: str):
     await websocket.accept()

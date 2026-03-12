@@ -316,6 +316,13 @@ class TradingSession:
 
         await trader_queue.purge()
 
+    async def initialize_simulated(self):
+        self.start_time = now()
+        self.active = True
+        self.paused = False
+        self.paused_at = None
+        self.paused_total_seconds = 0.0
+
     async def clean_up(self):
         """
         This one is mostly used for closing connections and channels opened by a trading session.
@@ -1818,23 +1825,6 @@ class TradingSession:
     async def run(self):
         try:
             while not self._stop_requested.is_set():
-                current_time = now()
-                elapsed = self._effective_elapsed_seconds(current_time)
-                if elapsed > float(self.duration) * 60.0:
-                    # Time limit reached: stop accepting orders and broadcast closure.
-                    logger.critical('Time limit reached, stopping...')
-                    closure_callback = getattr(self, "on_session_closure", None)
-                    if callable(closure_callback):
-                        try:
-                            callback_result = closure_callback()
-                            if asyncio.iscoroutine(callback_result):
-                                await callback_result
-                        except Exception as exc:
-                            logger.error(f"Session closure callback failed: {exc}")
-                    self.active = False  # here we stop accepting all incoming requests on placing new orders, cancelling etc.
-                    await self.send_broadcast({"type": "closure"})
-
-                    break
                 await asyncio.sleep(1)
             logger.critical('Exited the run loop.')
         except asyncio.CancelledError:
