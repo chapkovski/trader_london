@@ -6,6 +6,7 @@ so they can communicate with them.
 
 from structures import TraderCreationData
 from typing import List
+import random
 from traders import HumanTrader, NoiseTrader
 
 from main_platform import TradingSession
@@ -31,9 +32,14 @@ class TraderManager:
         logger.critical(f"TraderManager params: {params}")
         self.tasks = []
         self._applied_dividend_days = set()
+        self._started = False
+        self.is_simulated = bool(params.get("is_simulated", False))
+        self._simulation_rng = random.Random(0)
 
         cash = float(params.get("initial_cash", 0) or 0)
         shares = max(0, int(params.get("initial_stocks", 0) or 0))
+        self.initial_midpoint = float(params.get("initial_midpoint", 100) or 100)
+        self.initial_spread = max(1.0, float(params.get("initial_spread", 10) or 10))
         self.num_days = max(1, int(params.get("num_days", 1) or 1))
         self.trading_day_duration = max(1, int(params.get("trading_day_duration", 1) or 1))
         self.dividends = [max(0.0, float(x or 0.0)) for x in (params.get("dividends") or [])]
@@ -87,9 +93,9 @@ class TraderManager:
         )
         self.trading_session.on_session_closure = self.apply_remaining_dividends
 
-
-
-    async def launch(self):
+    async def startup(self):
+        if self._started:
+            return
         await self.trading_session.initialize()
         logger.info(f"Trading session UUID: {self.trading_session.id}")
 
@@ -99,6 +105,10 @@ class TraderManager:
             await trader.connect_to_session(trading_session_uuid=self.trading_session.id)
 
         await self.trading_session.send_broadcast({"content": "Market is open"})
+        self._started = True
+
+    async def launch(self):
+        await self.startup()
 
         # Run the session loop and all traders concurrently.
         trading_session_task = asyncio.create_task(self.trading_session.run())
@@ -129,6 +139,49 @@ class TraderManager:
             if day not in self._applied_dividend_days:
                 return day
         return self.num_days + 1
+
+    async def generate_simulated_day_activity(self):
+        if not self.is_simulated:
+            return {"changed": False, "reason": "not_simulated"}
+        if not self._started:
+            await self.startup()
+        if not self.trading_session.active:
+            return {"changed": False, "reason": "inactive"}
+        if self.trading_session.paused:
+            return {"changed": False, "reason": "already_paused"}
+        if len(self.human_traders) < 2:
+            return {"changed": False, "reason": "need_two_humans"}
+
+        day_index = min(self._next_unapplied_day(), self.num_days)
+        buyer, seller = self.human_traders[0], self.human_traders[1]
+        if day_index % 2 == 0:
+            buyer, seller = seller, buyer
+
+        anchor_price = self.trading_session.transaction_price
+        if anchor_price is None:
+            anchor_price = self.initial_midpoint
+        drift = self._simulation_rng.choice([-1, 0, 1]) + (day_index - 1)
+        trade_price = max(1, int(round(float(anchor_price) + drift)))
+        passive_bid_price = max(1, trade_price - max(1, int(round(self.initial_spread / 2.0))))
+        passive_ask_price = trade_price + max(1, int(round(self.initial_spread / 2.0)))
+
+        actions = [
+            dict(trader_id=buyer.id, amount=1, price=trade_price, order_type=1),
+            dict(trader_id=seller.id, amount=1, price=trade_price, order_type=-1),
+            dict(trader_id=buyer.id, amount=1, price=passive_bid_price, order_type=1),
+            dict(trader_id=seller.id, amount=1, price=passive_ask_price, order_type=-1),
+        ]
+        results = []
+        for action in actions:
+            results.append(await self.trading_session.handle_add_order(dict(action)))
+
+        return {
+            "changed": True,
+            "day_index": day_index,
+            "trade_price": trade_price,
+            "last_transaction_price": self.trading_session.transaction_price,
+            "results": results,
+        }
 
     async def apply_dividend_for_day(self, trading_day: int):
         day_key = int(trading_day or 0)
@@ -186,13 +239,16 @@ class TraderManager:
         }
 
     async def pause_session(self):
+        simulation_result = None
+        if self.is_simulated:
+            simulation_result = await self.generate_simulated_day_activity()
         result = await self.trading_session.pause_session()
         dividend_result = None
         if result.get("changed"):
             day_to_apply = self._next_unapplied_day()
             if day_to_apply <= (self.num_days - 1):
                 dividend_result = await self.apply_dividend_for_day(day_to_apply)
-        return {**result, "dividend_result": dividend_result}
+        return {**result, "dividend_result": dividend_result, "simulation_result": simulation_result}
 
     async def apply_remaining_dividends(self):
         summaries = []

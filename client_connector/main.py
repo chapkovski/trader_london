@@ -78,6 +78,8 @@ async def create_trading_session(params: TraderCreationData, background_tasks: B
         trader_manager = TraderManager(params)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if params.is_simulated:
+        await trader_manager.startup()
     session_uuid = trader_manager.trading_session.id
 
     all_traders = list(trader_manager.traders.values())

@@ -20,6 +20,11 @@ def now():
 
 
 class TraderCreationData(BaseModel):
+    is_simulated: bool = Field(
+        default=False,
+        title="Simulated Session",
+        description="Whether the platform should synthesize order flow for testing/bot sessions",
+    )
     num_human_traders: int = Field(
         default=1,
         title="Number of Human Traders",
