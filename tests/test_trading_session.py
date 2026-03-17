@@ -1,7 +1,6 @@
 import pytest
 import asyncio
 import uuid
-from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 from unittest.mock import MagicMock
 from main_platform import TradingSession
@@ -13,59 +12,14 @@ async def test_initialize():
     session = TradingSession(duration=1)
     session.connection = AsyncMock()
     session.channel = AsyncMock()
-    start = datetime(2023, 4, 1, 0, 0, tzinfo=timezone.utc)
     with patch("aio_pika.connect_robust", return_value=session.connection), patch(
-        "main_platform.trading_platform.now", return_value=start
+        "main_platform.trading_platform.now", return_value="2023-04-01T00:00:00Z"
     ):
         await session.initialize()
         session.connection.channel.assert_awaited()
         session.channel.declare_exchange.assert_awaited()
         assert session.active is True
-        assert session.start_time == start
-
-
-def test_timing_snapshot_reports_last_day_as_60_second_window():
-    start = datetime(2026, 3, 13, 12, 0, tzinfo=timezone.utc)
-    current = start + timedelta(minutes=14, seconds=30)
-    session = TradingSession(duration=15, day_duration_minutes=1, num_days=15)
-    session.start_time = start
-    session.active = True
-
-    snapshot = session.timing_snapshot(current)
-
-    assert snapshot["current_trading_day"] == 15
-    assert snapshot["day_duration_seconds"] == 60.0
-    assert snapshot["seconds_into_current_day"] == 30.0
-    assert snapshot["remaining_seconds_in_day"] == 30.0
-    assert snapshot["remaining_seconds_in_session"] == 30.0
-
-
-def test_validate_order_entry_rejects_after_deadline_even_before_pause():
-    start = datetime(2026, 3, 13, 12, 0, tzinfo=timezone.utc)
-    session = TradingSession(duration=15, day_duration_minutes=1, num_days=15)
-    session.start_time = start
-    session.active = True
-    session._open_order_entry_window(current_time=start)
-
-    allowed, reason = session._validate_order_entry(start + timedelta(seconds=60, milliseconds=1))
-
-    assert allowed is False
-    assert reason == "Trading day already ended"
-    assert session.accepting_orders is False
-
-
-def test_create_transaction_uses_frozen_open_trading_day():
-    start = datetime(2026, 3, 13, 12, 0, tzinfo=timezone.utc)
-    session = TradingSession(duration=15, day_duration_minutes=1, num_days=15)
-    session.start_time = start
-    session.active = True
-    session.open_trading_day = 14
-    bid = {"id": "bid-1", "trader_id": "buyer", "accepted_trading_day": 14}
-    ask = {"id": "ask-1", "trader_id": "seller", "accepted_trading_day": 14}
-
-    _, _, transaction = session.create_transaction(bid, ask, transaction_price=100, transaction_amount=1)
-
-    assert transaction["trading_day"] == 14
+        assert session.start_time == "2023-04-01T00:00:00Z"
 
 
 @pytest.mark.asyncio

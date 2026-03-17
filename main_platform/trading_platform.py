@@ -59,9 +59,6 @@ class TradingSession:
         self.paused = False
         self.paused_at = None
         self.paused_total_seconds = 0.0
-        self.accepting_orders = False
-        self.open_trading_day = None
-        self.orders_allowed_until = None
 
         self.id = str(uuid.uuid4())
 
@@ -209,63 +206,6 @@ class TradingSession:
             "connected_traders": self.connected_traders,
         }
 
-    def timing_snapshot(self, current_time=None):
-        current_time = current_time or now()
-        day_duration_seconds = max(1.0, float(self.day_duration_minutes) * 60.0)
-        total_expected_trading_seconds = max(1.0, float(self.duration) * 60.0)
-        effective_elapsed_seconds = self._effective_elapsed_seconds(current_time)
-        remaining_seconds_in_session = max(0.0, total_expected_trading_seconds - effective_elapsed_seconds)
-        current_trading_day = self._current_trading_day() if self.start_time else 1
-        seconds_into_current_day = self.seconds_into_current_day(current_time)
-        remaining_seconds_in_day = max(0.0, day_duration_seconds - seconds_into_current_day)
-        current_pause_seconds = 0.0
-        if self.paused and self.paused_at:
-            current_pause_seconds = max(0.0, (current_time - self.paused_at).total_seconds())
-
-        scheduled_end_time = None
-        effective_end_time = None
-        current_day_started_at = None
-        current_day_expected_end_at = None
-        if self.start_time:
-            scheduled_end_time = self.start_time + timedelta(minutes=self.duration)
-            effective_end_time = scheduled_end_time + timedelta(
-                seconds=float(self.paused_total_seconds or 0.0) + current_pause_seconds
-            )
-            current_day_started_at = self.start_time + timedelta(
-                seconds=((current_trading_day - 1) * day_duration_seconds)
-                + float(self.paused_total_seconds or 0.0)
-            )
-            current_day_expected_end_at = current_day_started_at + timedelta(
-                seconds=day_duration_seconds + current_pause_seconds
-            )
-
-        return {
-            "active": bool(self.active),
-            "paused": bool(self.paused),
-            "accepting_orders": bool(self.accepting_orders),
-            "start_time": self.start_time,
-            "creation_time": self.creation_time,
-            "duration_minutes": int(self.duration),
-            "num_days": int(self.num_days),
-            "day_duration_minutes": int(self.day_duration_minutes),
-            "day_duration_seconds": day_duration_seconds,
-            "total_expected_trading_seconds": total_expected_trading_seconds,
-            "effective_elapsed_seconds": round(effective_elapsed_seconds, 3),
-            "remaining_seconds_in_session": round(remaining_seconds_in_session, 3),
-            "current_trading_day": int(current_trading_day),
-            "open_trading_day": int(self.open_trading_day or current_trading_day),
-            "seconds_into_current_day": round(seconds_into_current_day, 3),
-            "remaining_seconds_in_day": round(remaining_seconds_in_day, 3),
-            "paused_total_seconds": round(float(self.paused_total_seconds or 0.0), 3),
-            "current_pause_seconds": round(current_pause_seconds, 3),
-            "noise_trader_start_second": float(self.noise_trader_start_second or 0.0),
-            "scheduled_end_time": scheduled_end_time,
-            "effective_end_time": effective_end_time,
-            "current_day_started_at": current_day_started_at,
-            "current_day_expected_end_at": current_day_expected_end_at,
-            "orders_allowed_until": self.orders_allowed_until,
-        }
-
     def _effective_elapsed_seconds(self, current_time):
         if not self.start_time:
             return 0.0
@@ -274,58 +214,12 @@ class TradingSession:
             elapsed -= max(0.0, (current_time - self.paused_at).total_seconds())
         return max(0.0, elapsed)
 
-    def _open_order_entry_window(self, current_time=None):
-        current_time = current_time or now()
-        self.open_trading_day = self._current_trading_day()
-        day_seconds = max(1.0, float(self.day_duration_minutes) * 60.0)
-        seconds_into_day = self.seconds_into_current_day(current_time)
-        remaining_seconds = max(0.0, day_seconds - seconds_into_day)
-        self.orders_allowed_until = current_time + timedelta(seconds=remaining_seconds)
-        self.accepting_orders = True
-        logger.info(
-            "Opened order entry window for session %s day=%s until=%s",
-            self.id,
-            self.open_trading_day,
-            self.orders_allowed_until.isoformat() if self.orders_allowed_until else None,
-        )
-
-    def _close_order_entry_window(self, reason="", current_time=None):
-        current_time = current_time or now()
-        if self.orders_allowed_until is None:
-            self.orders_allowed_until = current_time
-        self.accepting_orders = False
-        logger.info(
-            "Closed order entry window for session %s day=%s reason=%s at=%s",
-            self.id,
-            self.open_trading_day,
-            reason or "",
-            current_time.isoformat(),
-        )
-
-    def _validate_order_entry(self, current_time=None):
-        current_time = current_time or now()
-        if self.paused:
-            return False, "Trading day already paused"
-        if not self.accepting_orders:
-            return False, "Trading day already ended"
-        if self.open_trading_day is None:
-            return False, "Trading day is not open"
-        if self.orders_allowed_until and current_time >= self.orders_allowed_until:
-            self._close_order_entry_window(reason="deadline_passed", current_time=current_time)
-            return False, "Trading day already ended"
-        current_day = self._current_trading_day()
-        if int(current_day) != int(self.open_trading_day):
-            self._close_order_entry_window(reason="day_rollover", current_time=current_time)
-            return False, "Trading day already ended"
-        return True, None
-
     async def pause_session(self):
         async with self.lock:
             if not self.active:
                 return {"changed": False, "status": "inactive"}
             if self.paused:
                 return {"changed": False, "status": "already_paused"}
-            self._close_order_entry_window(reason="pause_requested")
             self.paused = True
             self.paused_at = now()
 
@@ -352,7 +246,6 @@ class TradingSession:
             self.paused_total_seconds = float(self.paused_total_seconds or 0.0) + paused_span
             self.paused_at = None
             self.paused = False
-            self._open_order_entry_window()
 
         warning = None
         try:
@@ -403,10 +296,6 @@ class TradingSession:
     async def initialize(self):
         self.start_time = now()
         self.active = True
-        self.paused = False
-        self.paused_at = None
-        self.paused_total_seconds = 0.0
-        self._open_order_entry_window(current_time=self.start_time)
         # Establish per-session exchanges/queues and start consuming trader messages.
         self.connection = await aio_pika.connect_robust(rabbitmq_url)
         self.channel = await self.connection.channel()
@@ -427,14 +316,6 @@ class TradingSession:
 
         await trader_queue.purge()
 
-    async def initialize_simulated(self):
-        self.start_time = now()
-        self.active = True
-        self.paused = False
-        self.paused_at = None
-        self.paused_total_seconds = 0.0
-        self._open_order_entry_window(current_time=self.start_time)
-
     async def clean_up(self):
         """
         This one is mostly used for closing connections and channels opened by a trading session.
@@ -444,7 +325,6 @@ class TradingSession:
         # Signal the run loop to stop
         self._stop_requested.set()
         self.active = False
-        self.accepting_orders = False
         try:
             if self.channel and not self._resource_is_closed(self.channel):
                 # Unbind the queue from the exchange (optional, as auto_delete should handle this)
@@ -1193,12 +1073,6 @@ class TradingSession:
             return self.default_price
 
     def create_transaction(self, bid, ask, transaction_price, transaction_amount=None, aggressor_side=""):
-        trade_day = (
-            (bid or {}).get("accepted_trading_day")
-            or (ask or {}).get("accepted_trading_day")
-            or self.open_trading_day
-            or self._current_trading_day()
-        )
         transaction = {
             "id": str(uuid.uuid4()),
             "trading_session_id": str(self.id),
@@ -1207,7 +1081,7 @@ class TradingSession:
             "timestamp": now(),
             "price": float(transaction_price),
             "quantity": float(transaction_amount or 0),
-            "trading_day": int(trade_day),
+            "trading_day": self._current_trading_day(),
             "bid_trader_uuid": str(bid.get("trader_id") or ""),
             "ask_trader_uuid": str(ask.get("trader_id") or ""),
             "aggressor_side": str(aggressor_side or "").upper(),
@@ -1244,7 +1118,6 @@ class TradingSession:
     def _apply_fill(self, order_id, fill_amount, match_id=None, contra_order_id=None):
         """Apply a partial or full fill to one active order."""
         order = self.all_orders[order_id]
-        event_trading_day = int(self.open_trading_day or order.get("accepted_trading_day") or self._current_trading_day())
         remaining = float(order['amount']) - float(fill_amount)
         if remaining <= 0:
             order['amount'] = 0
@@ -1264,7 +1137,6 @@ class TradingSession:
             contra_order_id=contra_order_id,
             emit_mbp1=False,
             log_context="_apply_fill",
-            extra_event_fields={"trading_day": event_trading_day},
         )
 
     def _cash_for_trader(self, trader_id):
@@ -1429,7 +1301,6 @@ class TradingSession:
                 trader_id,
                 amount,
             )
-        event_trading_day = int(self.open_trading_day or order_state.get("accepted_trading_day") or self._current_trading_day())
         order_state['status'] = OrderStatus.CANCELLED.value
         order_state['cancellation_timestamp'] = now()
         return self._persist_order_state_change(
@@ -1441,7 +1312,6 @@ class TradingSession:
             size_resting_after=0.0,
             emit_mbp1=emit_mbp1,
             log_context=log_context,
-            extra_event_fields={"trading_day": event_trading_day},
         )
 
     def _cancel_active_order_without_persist(self, order: Dict):
@@ -1664,167 +1534,152 @@ class TradingSession:
         message that everything is ok (it's not needed in the current implementation and perhaps we can get rid of this later because it also increase the info load)
 
         """
-        async with self.lock:
-            allowed, reason = self._validate_order_entry()
-            if not allowed:
-                logger.warning(
-                    "Rejecting add_order for session %s trader=%s reason=%s open_day=%s allowed_until=%s paused=%s",
-                    self.id,
-                    data.get("trader_id"),
-                    reason,
-                    self.open_trading_day,
-                    self.orders_allowed_until.isoformat() if self.orders_allowed_until else None,
-                    self.paused,
-                )
-                return dict(respond=True, individual=True, status="failed", reason=reason)
+        if self.paused:
+            logger.info("Ignoring add_order while session is paused.")
+            return None
 
-            accepted_trading_day = int(self.open_trading_day or self._current_trading_day())
-            immediate = bool(data.pop('immediate', False))
-            data['order_type'] = int(data['order_type'])
-            trader_id = data.get('trader_id')
-            trader_meta = self.connected_traders.get(trader_id, {})
-            trader_type = trader_meta.get('trader_type')
+        immediate = bool(data.pop('immediate', False))
+        data['order_type'] = int(data['order_type'])
+        trader_id = data.get('trader_id')
+        trader_meta = self.connected_traders.get(trader_id, {})
+        trader_type = trader_meta.get('trader_type')
 
-            # Hard safety rule: all noise-trader orders are unit-size and integer-priced.
-            if trader_type == TraderType.NOISE.value:
-                data['amount'] = 1
-                try:
-                    data['price'] = max(1, int(round(float(data.get('price', self.default_price)))))
-                except (TypeError, ValueError):
-                    data['price'] = max(1, int(round(float(self.default_price))))
-
-            placed_order_id = None
-            add_event_persisted = False
-            reserved_cash_amount = 0.0
-            reserved_cash_trader_id = None
-            reserved_shares_amount = 0.0
-            reserved_shares_trader_id = None
-            if immediate:
-                data['price'] = self._aggressive_price_for_immediate(
-                    data['order_type'],
-                    data.get('price')
-                )
+        # Hard safety rule: all noise-trader orders are unit-size and integer-priced.
+        if trader_type == TraderType.NOISE.value:
+            data['amount'] = 1
             try:
+                data['price'] = max(1, int(round(float(data.get('price', self.default_price)))))
+            except (TypeError, ValueError):
+                data['price'] = max(1, int(round(float(self.default_price))))
 
-                order = Order(status=OrderStatus.BUFFERED.value,
-                              session_id=self.id,
-                              **data)
+        placed_order_id = None
+        add_event_persisted = False
+        reserved_cash_amount = 0.0
+        reserved_cash_trader_id = None
+        reserved_shares_amount = 0.0
+        reserved_shares_trader_id = None
+        if immediate:
+            data['price'] = self._aggressive_price_for_immediate(
+                data['order_type'],
+                data.get('price')
+            )
+        try:
 
-                if int(order.order_type) == int(OrderType.BID):
-                    ok, reserved_cash_amount = self._reserve_cash_for_bid(
-                        order.trader_id,
-                        order.price,
-                        order.amount,
+            order = Order(status=OrderStatus.BUFFERED.value,
+                          session_id=self.id,
+                          **data)
+
+            if int(order.order_type) == int(OrderType.BID):
+                ok, reserved_cash_amount = self._reserve_cash_for_bid(
+                    order.trader_id,
+                    order.price,
+                    order.amount,
+                )
+                if not ok:
+                    return dict(
+                        respond=True,
+                        status="failed",
+                        reason="Insufficient available cash for buy order",
                     )
-                    if not ok:
-                        return dict(
-                            respond=True,
-                            status="failed",
-                            reason="Insufficient available cash for buy order",
-                        )
-                    reserved_cash_trader_id = order.trader_id
-                elif int(order.order_type) == int(OrderType.ASK):
-                    ok, reserved_shares_amount = self._reserve_shares_for_ask(
-                        order.trader_id,
-                        order.amount,
+                reserved_cash_trader_id = order.trader_id
+            elif int(order.order_type) == int(OrderType.ASK):
+                ok, reserved_shares_amount = self._reserve_shares_for_ask(
+                    order.trader_id,
+                    order.amount,
+                )
+                if not ok:
+                    return dict(
+                        respond=True,
+                        status="failed",
+                        reason="Insufficient available shares for sell order",
                     )
-                    if not ok:
-                        return dict(
-                            respond=True,
-                            status="failed",
-                            reason="Insufficient available shares for sell order",
-                        )
-                    reserved_shares_trader_id = order.trader_id
+                reserved_shares_trader_id = order.trader_id
 
-                # Place the order and freeze its trading day at acceptance time.
-                placed_order = self.place_order(order.model_dump())  # Converting order to dict for compatibility
-                placed_order['accepted_trading_day'] = accepted_trading_day
-                placed_order_id = placed_order.get('id')
-                if not self._would_order_cross_book(placed_order):
-                    queue_metrics = self._queue_metrics_for_order(placed_order)
-                    order_submission_metrics = {
-                        **queue_metrics,
-                        "trading_day": accepted_trading_day,
-                    }
-                    self._persist_order_state_change(
-                        placed_order,
-                        "add",
-                        event_ts=placed_order.get("timestamp") or now(),
-                        event_size=placed_order.get("amount"),
-                        size_delta=abs(float(placed_order.get("amount", 0) or 0)),
-                        size_resting_after=placed_order.get("amount"),
-                        emit_mbp1=True,
-                        log_context="new",
-                        extra_event_fields=order_submission_metrics,
-                    )
-                    add_event_persisted = True
-
-            except ValidationError as e:
-                # Handle validation errors, e.g., log them or send a message back to the trader
-                logger.critical(f"Order validation failed: {e}")
-                if reserved_cash_trader_id and reserved_cash_amount > 0:
-                    self._release_reserved_cash(reserved_cash_trader_id, reserved_cash_amount)
-                if reserved_shares_trader_id and reserved_shares_amount > 0:
-                    self._release_reserved_shares(reserved_shares_trader_id, reserved_shares_amount)
-                return dict(respond=True, status="failed", reason="Order validation failed")
-            except Exception:
-                if reserved_cash_trader_id and reserved_cash_amount > 0:
-                    self._release_reserved_cash(reserved_cash_trader_id, reserved_cash_amount)
-                if reserved_shares_trader_id and reserved_shares_amount > 0:
-                    self._release_reserved_shares(reserved_shares_trader_id, reserved_shares_amount)
-                raise
-            # lets clear them now
-            resp = await self.clear_orders(aggressor_order_id=placed_order_id)
-            if (
-                not add_event_persisted
-                and not immediate
-                and placed_order_id
-                and placed_order_id in self.all_orders
-                and self.all_orders[placed_order_id]['status'] == OrderStatus.ACTIVE.value
-            ):
-                resting_order = self.all_orders[placed_order_id]
-                queue_metrics = self._queue_metrics_for_order(resting_order)
-                queue_metrics["trading_day"] = accepted_trading_day
+            # Place the order
+            placed_order = self.place_order(order.model_dump())  # Converting order to dict for compatibility
+            placed_order_id = placed_order.get('id')
+            if not self._would_order_cross_book(placed_order):
+                queue_metrics = self._queue_metrics_for_order(placed_order)
+                order_submission_metrics = {
+                    **queue_metrics,
+                }
                 self._persist_order_state_change(
-                    resting_order,
+                    placed_order,
                     "add",
-                    event_ts=resting_order.get("timestamp") or now(),
-                    event_size=resting_order.get("amount"),
-                    size_delta=abs(float(resting_order.get("amount", 0) or 0)),
-                    size_resting_after=resting_order.get("amount"),
+                    event_ts=placed_order.get("timestamp") or now(),
+                    event_size=placed_order.get("amount"),
+                    size_delta=abs(float(placed_order.get("amount", 0) or 0)),
+                    size_resting_after=placed_order.get("amount"),
                     emit_mbp1=True,
-                    log_context="new-post-match",
-                    extra_event_fields=queue_metrics,
+                    log_context="new",
+                    extra_event_fields=order_submission_metrics,
                 )
                 add_event_persisted = True
-            # IOC semantics: after immediate matching cycle, cancel any remaining quantity.
-            if immediate and placed_order_id and placed_order_id in self.all_orders:
-                if self.all_orders[placed_order_id]['status'] == OrderStatus.ACTIVE.value:
-                    if int(self.all_orders[placed_order_id].get('order_type')) == int(OrderType.BID):
-                        self._release_reserved_cash(
-                            self.all_orders[placed_order_id].get('trader_id'),
-                            float(self.all_orders[placed_order_id].get('price', 0))
-                            * float(self.all_orders[placed_order_id].get('amount', 0))
-                        )
-                    elif int(self.all_orders[placed_order_id].get('order_type')) == int(OrderType.ASK):
-                        self._release_reserved_shares(
-                            self.all_orders[placed_order_id].get('trader_id'),
-                            float(self.all_orders[placed_order_id].get('amount', 0)),
-                        )
-                    self.all_orders[placed_order_id]['status'] = OrderStatus.CANCELLED.value
-                    self.all_orders[placed_order_id]['cancellation_timestamp'] = now()
-                    self._persist_order_state_change(
-                        self.all_orders[placed_order_id],
-                        "cancel",
-                        event_ts=self.all_orders[placed_order_id].get('cancellation_timestamp') or now(),
-                        event_size=self.all_orders[placed_order_id].get('amount'),
-                        size_delta=-abs(float(self.all_orders[placed_order_id].get('amount', 0) or 0)),
-                        size_resting_after=0.0,
-                        emit_mbp1=True,
-                        log_context="ioc-cancel",
-                        extra_event_fields={"trading_day": accepted_trading_day},
+
+        except ValidationError as e:
+            # Handle validation errors, e.g., log them or send a message back to the trader
+            logger.critical(f"Order validation failed: {e}")
+            if reserved_cash_trader_id and reserved_cash_amount > 0:
+                self._release_reserved_cash(reserved_cash_trader_id, reserved_cash_amount)
+            if reserved_shares_trader_id and reserved_shares_amount > 0:
+                self._release_reserved_shares(reserved_shares_trader_id, reserved_shares_amount)
+            return dict(respond=True, status="failed", reason="Order validation failed")
+        except Exception:
+            if reserved_cash_trader_id and reserved_cash_amount > 0:
+                self._release_reserved_cash(reserved_cash_trader_id, reserved_cash_amount)
+            if reserved_shares_trader_id and reserved_shares_amount > 0:
+                self._release_reserved_shares(reserved_shares_trader_id, reserved_shares_amount)
+            raise
+        # lets clear them now
+        resp = await self.clear_orders(aggressor_order_id=placed_order_id)
+        if (
+            not add_event_persisted
+            and not immediate
+            and placed_order_id
+            and placed_order_id in self.all_orders
+            and self.all_orders[placed_order_id]['status'] == OrderStatus.ACTIVE.value
+        ):
+            resting_order = self.all_orders[placed_order_id]
+            queue_metrics = self._queue_metrics_for_order(resting_order)
+            self._persist_order_state_change(
+                resting_order,
+                "add",
+                event_ts=resting_order.get("timestamp") or now(),
+                event_size=resting_order.get("amount"),
+                size_delta=abs(float(resting_order.get("amount", 0) or 0)),
+                size_resting_after=resting_order.get("amount"),
+                emit_mbp1=True,
+                log_context="new-post-match",
+                extra_event_fields=queue_metrics,
+            )
+            add_event_persisted = True
+        # IOC semantics: after immediate matching cycle, cancel any remaining quantity.
+        if immediate and placed_order_id and placed_order_id in self.all_orders:
+            if self.all_orders[placed_order_id]['status'] == OrderStatus.ACTIVE.value:
+                if int(self.all_orders[placed_order_id].get('order_type')) == int(OrderType.BID):
+                    self._release_reserved_cash(
+                        self.all_orders[placed_order_id].get('trader_id'),
+                        float(self.all_orders[placed_order_id].get('price', 0))
+                        * float(self.all_orders[placed_order_id].get('amount', 0))
                     )
-            subgroup_data = resp.pop('subgroup_broadcast', None)
+                elif int(self.all_orders[placed_order_id].get('order_type')) == int(OrderType.ASK):
+                    self._release_reserved_shares(
+                        self.all_orders[placed_order_id].get('trader_id'),
+                        float(self.all_orders[placed_order_id].get('amount', 0)),
+                    )
+                self.all_orders[placed_order_id]['status'] = OrderStatus.CANCELLED.value
+                self.all_orders[placed_order_id]['cancellation_timestamp'] = now()
+                self._persist_order_state_change(
+                    self.all_orders[placed_order_id],
+                    "cancel",
+                    event_ts=self.all_orders[placed_order_id].get('cancellation_timestamp') or now(),
+                    event_size=self.all_orders[placed_order_id].get('amount'),
+                    size_delta=-abs(float(self.all_orders[placed_order_id].get('amount', 0) or 0)),
+                    size_resting_after=0.0,
+                    emit_mbp1=True,
+                    log_context="ioc-cancel",
+                )
+        subgroup_data = resp.pop('subgroup_broadcast', None)
         if subgroup_data:
             await self.send_message_to_subgroup(subgroup_data)
         return dict(respond=True, **resp)
@@ -1963,6 +1818,23 @@ class TradingSession:
     async def run(self):
         try:
             while not self._stop_requested.is_set():
+                current_time = now()
+                elapsed = self._effective_elapsed_seconds(current_time)
+                if elapsed > float(self.duration) * 60.0:
+                    # Time limit reached: stop accepting orders and broadcast closure.
+                    logger.critical('Time limit reached, stopping...')
+                    closure_callback = getattr(self, "on_session_closure", None)
+                    if callable(closure_callback):
+                        try:
+                            callback_result = closure_callback()
+                            if asyncio.iscoroutine(callback_result):
+                                await callback_result
+                        except Exception as exc:
+                            logger.error(f"Session closure callback failed: {exc}")
+                    self.active = False  # here we stop accepting all incoming requests on placing new orders, cancelling etc.
+                    await self.send_broadcast({"type": "closure"})
+
+                    break
                 await asyncio.sleep(1)
             logger.critical('Exited the run loop.')
         except asyncio.CancelledError:

@@ -1,5 +1,4 @@
 import asyncio
-import json
 
 import aio_pika
 from fastapi import BackgroundTasks, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -13,7 +12,6 @@ from main_platform.trading_platform import SQL_DB, rabbitmq_url
 from structures import TraderCreationData
 
 logger = setup_custom_logger(__name__)
-day_timing_logger = setup_custom_logger("day_timing_platform")
 
 
 def _mask_db_url(url: str) -> str:
@@ -32,17 +30,6 @@ def _mask_db_url(url: str) -> str:
         user = creds.split(":", 1)[0]
         return f"{scheme}://{user}:***@{host_part}"
     return f"{scheme}://***@{host_part}"
-
-
-def _log_day_timing_event(event: str, trader_manager=None, **context):
-    trading_session = getattr(trader_manager, "trading_session", None)
-    payload = {
-        "event": str(event),
-        "trading_session_uuid": getattr(trading_session, "id", ""),
-        "timing": trading_session.timing_snapshot() if trading_session else {},
-        **context,
-    }
-    day_timing_logger.info(json.dumps(payload, sort_keys=True, default=str))
 
 
 app = FastAPI()
@@ -94,12 +81,6 @@ async def create_trading_session(params: TraderCreationData, background_tasks: B
     if params.is_simulated:
         await trader_manager.startup()
     session_uuid = trader_manager.trading_session.id
-    _log_day_timing_event(
-        "session_created",
-        trader_manager=trader_manager,
-        params=params.model_dump(),
-        is_simulated=bool(params.is_simulated),
-    )
 
     all_traders = list(trader_manager.traders.values())
     all_trader_ids = [t.id for t in all_traders]
@@ -112,7 +93,6 @@ async def create_trading_session(params: TraderCreationData, background_tasks: B
             "trading_session_uuid": session_uuid,
             "traders": all_trader_ids,
             "human_traders": human_trader_ids,
-            "timing": trader_manager.trading_session.timing_snapshot(),
         }
         trader_rows = [
             {
@@ -143,7 +123,6 @@ async def create_trading_session(params: TraderCreationData, background_tasks: B
             "trading_session_uuid": session_uuid,
             "traders": all_trader_ids,
             "human_traders": human_trader_ids,
-            "timing": trader_manager.trading_session.timing_snapshot(),
         },
     }
 
@@ -272,7 +251,6 @@ async def get_trading_session(trading_session_id: str):
             "traders": list(trader_manager.traders.keys()),
             "human_traders": [t.get_trader_params_as_dict() for t in trader_manager.human_traders],
             "last_transaction_price": trader_manager.trading_session.transaction_price,
-            "timing": trader_manager.trading_session.timing_snapshot(),
         },
     }
 
@@ -283,7 +261,6 @@ async def pause_trading_session(trading_session_id: str):
     if not trader_manager:
         raise HTTPException(status_code=404, detail="Trading session not found")
     result = await trader_manager.pause_session()
-    _log_day_timing_event("session_paused", trader_manager=trader_manager, result=result)
     return {
         "status": "success",
         "message": "Pause request processed",
@@ -291,7 +268,6 @@ async def pause_trading_session(trading_session_id: str):
             "trading_session_uuid": trading_session_id,
             **result,
             "last_transaction_price": trader_manager.trading_session.transaction_price,
-            "timing": trader_manager.trading_session.timing_snapshot(),
         },
     }
 
@@ -302,33 +278,12 @@ async def resume_trading_session(trading_session_id: str):
     if not trader_manager:
         raise HTTPException(status_code=404, detail="Trading session not found")
     result = await trader_manager.trading_session.resume_session()
-    _log_day_timing_event("session_resumed", trader_manager=trader_manager, result=result)
     return {
         "status": "success",
         "message": "Resume request processed",
         "data": {
             "trading_session_uuid": trading_session_id,
             **result,
-            "timing": trader_manager.trading_session.timing_snapshot(),
-        },
-    }
-
-
-@app.post("/trading_session/{trading_session_id}/close")
-async def close_trading_session(trading_session_id: str):
-    trader_manager = trader_managers.get(trading_session_id)
-    if not trader_manager:
-        raise HTTPException(status_code=404, detail="Trading session not found")
-    result = await trader_manager.finalize_session()
-    _log_day_timing_event("session_closed", trader_manager=trader_manager, result=result)
-    return {
-        "status": "success",
-        "message": "Close request processed",
-        "data": {
-            "trading_session_uuid": trading_session_id,
-            **result,
-            "last_transaction_price": trader_manager.trading_session.transaction_price,
-            "timing": trader_manager.trading_session.timing_snapshot(),
         },
     }
 
