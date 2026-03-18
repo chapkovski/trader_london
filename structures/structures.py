@@ -148,6 +148,7 @@ class Order(BaseModel):
     price: float  # Same assumption as for amount
     order_type: OrderType
     timestamp: datetime = Field(default_factory=now)
+    trading_day: int | None = None
     session_id: str
     trader_id: str
 

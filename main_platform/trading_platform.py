@@ -176,6 +176,11 @@ class TradingSession:
         day = int(elapsed_seconds // (float(self.day_duration_minutes) * 60.0)) + 1
         return max(1, min(day, int(self.num_days)))
 
+    def _trading_day_for_timestamp(self, current_time):
+        elapsed_seconds = self._effective_elapsed_seconds(current_time)
+        day = int(elapsed_seconds // (float(self.day_duration_minutes) * 60.0)) + 1
+        return max(1, min(day, int(self.num_days)))
+
     def seconds_into_current_day(self, current_time=None):
         current_time = current_time or now()
         elapsed_seconds = self._effective_elapsed_seconds(current_time)
@@ -605,7 +610,10 @@ class TradingSession:
         event_payload = dict(payload or {})
         event_payload.setdefault("event_seq", self._next_mbo_event_seq())
         event_payload.setdefault("event_ts", now())
-        event_payload.setdefault("trading_day", self._current_trading_day())
+        if event_payload.get("trading_day") in (None, ""):
+            event_payload["trading_day"] = self._trading_day_for_timestamp(
+                event_payload.get("event_ts") or now()
+            )
         try:
             self.sql_store.save_mbo_event(self.id, event_payload)
         except Exception as exc:
@@ -629,6 +637,7 @@ class TradingSession:
         emit_mbp1: bool = True,
         log_context: str = "",
         extra_event_fields: Dict = None,
+        trading_day=None,
     ):
         if not self.sql_enabled:
             return
@@ -661,6 +670,11 @@ class TradingSession:
             "record_kind": "order",
             "event_type": str(event_type or ""),
             "event_ts": event_ts or now(),
+            "trading_day": int(
+                trading_day
+                or (order or {}).get("trading_day")
+                or self._trading_day_for_timestamp(event_ts or now())
+            ),
             "side": self._side_label((order or {}).get("order_type")),
             "order_id": str((order or {}).get("id") or ""),
             "trader_uuid": str((order or {}).get("trader_id") or ""),
@@ -690,6 +704,7 @@ class TradingSession:
                 "record_kind": "trade",
                 "event_type": "trade",
                 "event_ts": (transaction or {}).get("timestamp") or now(),
+                "trading_day": (transaction or {}).get("trading_day"),
                 "side": trade_side,
                 "order_id": "",
                 "trader_uuid": "",
@@ -1022,6 +1037,10 @@ class TradingSession:
         order_id = order_dict['id']
         order_dict.update({
             'status': OrderStatus.ACTIVE.value,
+            'trading_day': int(
+                order_dict.get('trading_day')
+                or self._trading_day_for_timestamp(order_dict.get('timestamp') or now())
+            ),
         })
         self.all_orders[order_id] = order_dict
         return order_dict
@@ -1072,16 +1091,26 @@ class TradingSession:
         except (TypeError, ValueError):
             return self.default_price
 
-    def create_transaction(self, bid, ask, transaction_price, transaction_amount=None, aggressor_side=""):
+    def create_transaction(
+        self,
+        bid,
+        ask,
+        transaction_price,
+        transaction_amount=None,
+        aggressor_side="",
+        timestamp=None,
+        trading_day=None,
+    ):
+        transaction_ts = timestamp or now()
         transaction = {
             "id": str(uuid.uuid4()),
             "trading_session_id": str(self.id),
             "bid_order_id": str(bid.get("id") or ""),
             "ask_order_id": str(ask.get("id") or ""),
-            "timestamp": now(),
+            "timestamp": transaction_ts,
             "price": float(transaction_price),
             "quantity": float(transaction_amount or 0),
-            "trading_day": self._current_trading_day(),
+            "trading_day": int(trading_day or self._trading_day_for_timestamp(transaction_ts)),
             "bid_trader_uuid": str(bid.get("trader_id") or ""),
             "ask_trader_uuid": str(ask.get("trader_id") or ""),
             "aggressor_side": str(aggressor_side or "").upper(),
@@ -1115,7 +1144,7 @@ class TradingSession:
         # Return trader IDs involved in the transaction for further processing
         return ask['trader_id'], bid['trader_id'], transaction
 
-    def _apply_fill(self, order_id, fill_amount, match_id=None, contra_order_id=None):
+    def _apply_fill(self, order_id, fill_amount, match_id=None, contra_order_id=None, trading_day=None):
         """Apply a partial or full fill to one active order."""
         order = self.all_orders[order_id]
         remaining = float(order['amount']) - float(fill_amount)
@@ -1137,6 +1166,7 @@ class TradingSession:
             contra_order_id=contra_order_id,
             emit_mbp1=False,
             log_context="_apply_fill",
+            trading_day=trading_day,
         )
 
     def _cash_for_trader(self, trader_id):
@@ -1368,6 +1398,15 @@ class TradingSession:
                 ask,
                 aggressor_order_id=aggressor_order_id,
             )
+            match_trading_day = (
+                bid.get("trading_day")
+                if aggressor_side == "B"
+                else ask.get("trading_day")
+                if aggressor_side == "S"
+                else None
+            )
+            if match_trading_day in (None, ""):
+                match_trading_day = self._trading_day_for_timestamp(now())
             transaction_amount = min(float(ask['amount']), float(bid['amount']))
             ask_trader_id = ask.get('trader_id')
             bid_trader_id = bid.get('trader_id')
@@ -1448,6 +1487,8 @@ class TradingSession:
                 transaction_price,
                 transaction_amount,
                 aggressor_side=aggressor_side,
+                timestamp=now(),
+                trading_day=match_trading_day,
             )
             # Release reserved cash for the filled bid quantity at the bid limit price.
             self._release_reserved_cash(
@@ -1464,12 +1505,14 @@ class TradingSession:
                 transaction_amount,
                 match_id=transaction.get('id'),
                 contra_order_id=bid.get('id'),
+                trading_day=transaction.get('trading_day'),
             )
             self._apply_fill(
                 bid['id'],
                 transaction_amount,
                 match_id=transaction.get('id'),
                 contra_order_id=ask.get('id'),
+                trading_day=transaction.get('trading_day'),
             )
             self._apply_cash_flows(bid_trader_id, ask_trader_id, transaction_price, transaction_amount)
             self._apply_share_flows(bid_trader_id, ask_trader_id, transaction_amount)
@@ -1558,6 +1601,8 @@ class TradingSession:
         reserved_cash_trader_id = None
         reserved_shares_amount = 0.0
         reserved_shares_trader_id = None
+        submission_ts = now()
+        submission_trading_day = self._trading_day_for_timestamp(submission_ts)
         if immediate:
             data['price'] = self._aggressive_price_for_immediate(
                 data['order_type'],
@@ -1566,6 +1611,8 @@ class TradingSession:
         try:
 
             order = Order(status=OrderStatus.BUFFERED.value,
+                          timestamp=submission_ts,
+                          trading_day=submission_trading_day,
                           session_id=self.id,
                           **data)
 
@@ -1613,6 +1660,7 @@ class TradingSession:
                     emit_mbp1=True,
                     log_context="new",
                     extra_event_fields=order_submission_metrics,
+                    trading_day=placed_order.get("trading_day"),
                 )
                 add_event_persisted = True
 
@@ -1651,6 +1699,7 @@ class TradingSession:
                 emit_mbp1=True,
                 log_context="new-post-match",
                 extra_event_fields=queue_metrics,
+                trading_day=resting_order.get("trading_day"),
             )
             add_event_persisted = True
         # IOC semantics: after immediate matching cycle, cancel any remaining quantity.
@@ -1678,6 +1727,7 @@ class TradingSession:
                     size_resting_after=0.0,
                     emit_mbp1=True,
                     log_context="ioc-cancel",
+                    trading_day=self.all_orders[placed_order_id].get('trading_day'),
                 )
         subgroup_data = resp.pop('subgroup_broadcast', None)
         if subgroup_data:
