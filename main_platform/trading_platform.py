@@ -1586,6 +1586,13 @@ class TradingSession:
         trader_id = data.get('trader_id')
         trader_meta = self.connected_traders.get(trader_id, {})
         trader_type = trader_meta.get('trader_type')
+        client_trading_day = data.pop("trading_day", None)
+        try:
+            client_trading_day = int(client_trading_day)
+        except (TypeError, ValueError):
+            client_trading_day = None
+        if client_trading_day is not None and not (1 <= client_trading_day <= int(self.num_days)):
+            client_trading_day = None
 
         # Hard safety rule: all noise-trader orders are unit-size and integer-priced.
         if trader_type == TraderType.NOISE.value:
@@ -1602,7 +1609,7 @@ class TradingSession:
         reserved_shares_amount = 0.0
         reserved_shares_trader_id = None
         submission_ts = now()
-        submission_trading_day = self._trading_day_for_timestamp(submission_ts)
+        submission_trading_day = client_trading_day or self._trading_day_for_timestamp(submission_ts)
         if immediate:
             data['price'] = self._aggressive_price_for_immediate(
                 data['order_type'],

@@ -217,14 +217,17 @@ async def get_trader_info(trader_uuid: str):
         raise HTTPException(status_code=404, detail="Trader not found")
 
     trader = trader_manager.get_trader(trader_uuid)
-    runtime_state = trader_manager.trading_session.connected_traders.get(trader_uuid, {})
+    trading_session = trader_manager.trading_session
+    runtime_state = trading_session.connected_traders.get(trader_uuid, {})
     cash = runtime_state.get("cash", trader.cash)
     shares = runtime_state.get("shares", trader.shares)
     reserved_cash = runtime_state.get("reserved_cash", 0.0)
     reserved_shares = runtime_state.get("reserved_shares", 0.0)
     available_cash = runtime_state.get("available_cash", float(cash or 0.0) - float(reserved_cash or 0.0))
     total_shares = float(shares or 0.0) + float(reserved_shares or 0.0)
-    transaction_count = int(trader_manager.trading_session.trader_transaction_counts.get(trader_uuid, 0))
+    transaction_count = int(trading_session.trader_transaction_counts.get(trader_uuid, 0))
+    current_price = trading_session._latest_transaction_price(trading_session.transactions or [])
+    spread, midpoint = trading_session.get_spread()
     return {
         "status": "success",
         "message": "Trader found",
@@ -236,7 +239,12 @@ async def get_trader_info(trader_uuid: str):
             "available_shares": shares,
             "reserved_shares": reserved_shares,
             "orders": trader.orders,
+            "order_book": trading_session.order_book,
+            "transaction_history": trading_session._full_transaction_history(),
             "transaction_count": transaction_count,
+            "current_price": current_price,
+            "spread": spread,
+            "midpoint": midpoint,
             "delta_cash": float(cash) - float(trader.initial_cash),
             "initial_cash": trader.initial_cash,
             "initial_shares": trader.initial_shares,
