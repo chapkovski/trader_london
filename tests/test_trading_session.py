@@ -598,6 +598,26 @@ def test_alert_uses_rolling_window_not_consecutive_streak():
     assert "went up 4 times in the last 5 ticks" in last_alert
 
 
+def test_alert_triggers_once_per_continuous_up_run_and_rearms_after_reset():
+    session = TradingSession(duration=1, alert_streak_frequency=3, alert_window_size=5)
+    transactions = []
+    prices = [
+        100, 101, 102, 103, 102, 103, 104,  # first up run, should alert once
+        103, 102,                            # break the up condition and reset the latch
+        103, 104, 105,                       # second up run, should alert again
+    ]
+
+    alerts = []
+    for idx, price in enumerate(prices):
+        transactions.append({"price": price, "timestamp": idx})
+        alert, _ = session._build_alert_message(transactions)
+        if alert:
+            alerts.append(alert)
+
+    assert len(alerts) == 2
+    assert all("Price went up" in alert for alert in alerts)
+
+
 @pytest.mark.asyncio
 async def test_noise_order_is_forced_to_unit_amount_and_integer_price():
     session = TradingSession(duration=1)

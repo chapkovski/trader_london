@@ -84,7 +84,8 @@ class TradingSession:
         self._last_seen_transaction_key = None
         self._alert_window_size = self.alert_window_size
         self._recent_price_moves = []
-        self._last_alert_signature = None
+        self._up_alert_run = False
+        self._down_alert_run = False
         self._last_broadcast_book_levels = {"bids": {}, "asks": {}}
         self._last_trader_book_levels = {}
         self._last_trader_order_maps = {}
@@ -145,19 +146,23 @@ class TradingSession:
         window_size = len(self._recent_price_moves)
         threshold = self.alert_streak_frequency
 
-        candidate = None
-        if up_count >= threshold and up_count > down_count:
-            candidate = ("up", up_count, window_size)
-        elif down_count >= threshold and down_count > up_count:
-            candidate = ("down", down_count, window_size)
+        up_condition = up_count >= threshold and up_count > down_count
+        down_condition = down_count >= threshold and down_count > up_count
 
-        if candidate and candidate != self._last_alert_signature:
-            self._last_alert_signature = candidate
-            direction, count, size = candidate
-            return (f"Price went {direction} {count} times in the last {size} ticks!", latest_price)
+        if up_condition:
+            if not self._up_alert_run:
+                self._up_alert_run = True
+                return (f"Price went up {up_count} times in the last {window_size} ticks!", latest_price)
+        else:
+            self._up_alert_run = False
 
-        if not candidate:
-            self._last_alert_signature = None
+        if down_condition:
+            if not self._down_alert_run:
+                self._down_alert_run = True
+                return (f"Price went down {down_count} times in the last {window_size} ticks!", latest_price)
+        else:
+            self._down_alert_run = False
+
         return "", latest_price
 
     @property
