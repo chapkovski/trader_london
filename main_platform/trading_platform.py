@@ -59,6 +59,9 @@ class TradingSession:
         self.paused = False
         self.paused_at = None
         self.paused_total_seconds = 0.0
+        self.current_trading_day = 1
+        self.current_day_started_at = None
+        self.closed = False
 
         self.id = str(uuid.uuid4())
 
@@ -171,25 +174,33 @@ class TradingSession:
         history.sort(key=self._transaction_ts)
         return history
 
+    def _normalize_trading_day(self, trading_day):
+        try:
+            trading_day = int(trading_day)
+        except (TypeError, ValueError):
+            return None
+        if 1 <= trading_day <= int(self.num_days):
+            return trading_day
+        return None
+
     def _current_trading_day(self):
-        elapsed_seconds = self._effective_elapsed_seconds(now())
-        day = int(elapsed_seconds // (float(self.day_duration_minutes) * 60.0)) + 1
-        return max(1, min(day, int(self.num_days)))
+        return max(1, min(int(self.current_trading_day or 1), int(self.num_days)))
 
     def _trading_day_for_timestamp(self, current_time):
-        elapsed_seconds = self._effective_elapsed_seconds(current_time)
-        day = int(elapsed_seconds // (float(self.day_duration_minutes) * 60.0)) + 1
-        return max(1, min(day, int(self.num_days)))
+        return self._current_trading_day()
 
     def seconds_into_current_day(self, current_time=None):
-        current_time = current_time or now()
-        elapsed_seconds = self._effective_elapsed_seconds(current_time)
-        day_seconds = float(self.day_duration_minutes) * 60.0
-        if day_seconds <= 0:
+        if not self.current_day_started_at:
             return 0.0
-        return max(0.0, elapsed_seconds % day_seconds)
+        current_time = current_time or now()
+        anchor_end = current_time
+        if self.paused and self.paused_at:
+            anchor_end = self.paused_at
+        return max(0.0, (anchor_end - self.current_day_started_at).total_seconds())
 
     def is_noise_trader_window_open(self, current_time=None):
+        if self.paused or self.closed:
+            return False
         return self.seconds_into_current_day(current_time) >= float(self.noise_trader_start_second or 0.0)
 
     @property
@@ -206,8 +217,10 @@ class TradingSession:
             "paused": self.paused,
             "paused_at": self.paused_at,
             "paused_total_seconds": self.paused_total_seconds,
+            "current_trading_day": self._current_trading_day(),
+            "current_day_started_at": self.current_day_started_at,
             "start_time": self.start_time,
-            "end_time": self.start_time + timedelta(minutes=self.duration),
+            "end_time": self.start_time + timedelta(minutes=self.duration) if self.start_time else None,
             "connected_traders": self.connected_traders,
         }
 
@@ -222,7 +235,7 @@ class TradingSession:
     async def pause_session(self):
         async with self.lock:
             if not self.active:
-                return {"changed": False, "status": "inactive"}
+                return {"changed": False, "status": "closed" if self.closed else "inactive"}
             if self.paused:
                 return {"changed": False, "status": "already_paused"}
             self.paused = True
@@ -230,35 +243,59 @@ class TradingSession:
 
         warning = None
         try:
-            await self.send_broadcast({"type": "market_paused"})
+            await self.send_broadcast({"type": "market_paused", "trading_day": self._current_trading_day()})
         except Exception as exc:
             warning = str(exc)
             logger.warning(f"pause_session broadcast failed for session {self.id}: {exc}")
-        result = {"changed": True, "status": "paused"}
+        result = {"changed": True, "status": "paused", "trading_day": self._current_trading_day()}
         if warning:
             result["broadcast_warning"] = warning
         return result
 
-    async def resume_session(self):
+    async def resume_session(self, trading_day=None):
         async with self.lock:
             if not self.active:
-                return {"changed": False, "status": "inactive"}
+                return {"changed": False, "status": "closed" if self.closed else "inactive"}
             if not self.paused:
                 return {"changed": False, "status": "already_running"}
-            paused_span = 0.0
-            if self.paused_at:
-                paused_span = max(0.0, (now() - self.paused_at).total_seconds())
-            self.paused_total_seconds = float(self.paused_total_seconds or 0.0) + paused_span
+            normalized_day = self._normalize_trading_day(trading_day)
+            if normalized_day is not None:
+                self.current_trading_day = normalized_day
             self.paused_at = None
             self.paused = False
+            self.current_day_started_at = now()
 
         warning = None
         try:
-            await self.send_broadcast({"type": "market_resumed"})
+            await self.send_broadcast({"type": "market_resumed", "trading_day": self._current_trading_day()})
         except Exception as exc:
             warning = str(exc)
             logger.warning(f"resume_session broadcast failed for session {self.id}: {exc}")
-        result = {"changed": True, "status": "running"}
+        result = {"changed": True, "status": "running", "trading_day": self._current_trading_day()}
+        if warning:
+            result["broadcast_warning"] = warning
+        return result
+
+    async def finalize_session(self, trading_day=None):
+        async with self.lock:
+            normalized_day = self._normalize_trading_day(trading_day)
+            if normalized_day is not None:
+                self.current_trading_day = normalized_day
+            if self.closed:
+                return {"changed": False, "status": "already_closed", "trading_day": self._current_trading_day()}
+            self.closed = True
+            self.paused = True
+            self.paused_at = now()
+            self.active = False
+            self._stop_requested.set()
+
+        warning = None
+        try:
+            await self.send_broadcast({"type": "closure", "trading_day": self._current_trading_day()})
+        except Exception as exc:
+            warning = str(exc)
+            logger.warning(f"finalize_session broadcast failed for session {self.id}: {exc}")
+        result = {"changed": True, "status": "closed", "trading_day": self._current_trading_day()}
         if warning:
             result["broadcast_warning"] = warning
         return result
@@ -301,6 +338,10 @@ class TradingSession:
     async def initialize(self):
         self.start_time = now()
         self.active = True
+        self.paused = True
+        self.paused_at = None
+        self.current_day_started_at = None
+        self.closed = False
         # Establish per-session exchanges/queues and start consuming trader messages.
         self.connection = await aio_pika.connect_robust(rabbitmq_url)
         self.channel = await self.connection.channel()
@@ -611,9 +652,7 @@ class TradingSession:
         event_payload.setdefault("event_seq", self._next_mbo_event_seq())
         event_payload.setdefault("event_ts", now())
         if event_payload.get("trading_day") in (None, ""):
-            event_payload["trading_day"] = self._trading_day_for_timestamp(
-                event_payload.get("event_ts") or now()
-            )
+            event_payload["trading_day"] = self._current_trading_day()
         try:
             self.sql_store.save_mbo_event(self.id, event_payload)
         except Exception as exc:
@@ -673,7 +712,7 @@ class TradingSession:
             "trading_day": int(
                 trading_day
                 or (order or {}).get("trading_day")
-                or self._trading_day_for_timestamp(event_ts or now())
+                or self._current_trading_day()
             ),
             "side": self._side_label((order or {}).get("order_type")),
             "order_id": str((order or {}).get("id") or ""),
@@ -1039,7 +1078,7 @@ class TradingSession:
             'status': OrderStatus.ACTIVE.value,
             'trading_day': int(
                 order_dict.get('trading_day')
-                or self._trading_day_for_timestamp(order_dict.get('timestamp') or now())
+                or self._current_trading_day()
             ),
         })
         self.all_orders[order_id] = order_dict
@@ -1110,7 +1149,7 @@ class TradingSession:
             "timestamp": transaction_ts,
             "price": float(transaction_price),
             "quantity": float(transaction_amount or 0),
-            "trading_day": int(trading_day or self._trading_day_for_timestamp(transaction_ts)),
+            "trading_day": int(trading_day or self._current_trading_day()),
             "bid_trader_uuid": str(bid.get("trader_id") or ""),
             "ask_trader_uuid": str(ask.get("trader_id") or ""),
             "aggressor_side": str(aggressor_side or "").upper(),
@@ -1406,7 +1445,7 @@ class TradingSession:
                 else None
             )
             if match_trading_day in (None, ""):
-                match_trading_day = self._trading_day_for_timestamp(now())
+                match_trading_day = self._current_trading_day()
             transaction_amount = min(float(ask['amount']), float(bid['amount']))
             ask_trader_id = ask.get('trader_id')
             bid_trader_id = bid.get('trader_id')
@@ -1578,8 +1617,12 @@ class TradingSession:
 
         """
         if self.paused:
-            logger.info("Ignoring add_order while session is paused.")
-            return None
+            logger.info("Rejecting add_order because session is paused.")
+            return {
+                "respond": True,
+                "status": "failed",
+                "reason": "Market is paused",
+            }
 
         immediate = bool(data.pop('immediate', False))
         data['order_type'] = int(data['order_type'])
@@ -1587,12 +1630,7 @@ class TradingSession:
         trader_meta = self.connected_traders.get(trader_id, {})
         trader_type = trader_meta.get('trader_type')
         client_trading_day = data.pop("trading_day", None)
-        try:
-            client_trading_day = int(client_trading_day)
-        except (TypeError, ValueError):
-            client_trading_day = None
-        if client_trading_day is not None and not (1 <= client_trading_day <= int(self.num_days)):
-            client_trading_day = None
+        client_trading_day = self._normalize_trading_day(client_trading_day)
 
         # Hard safety rule: all noise-trader orders are unit-size and integer-priced.
         if trader_type == TraderType.NOISE.value:
@@ -1609,7 +1647,7 @@ class TradingSession:
         reserved_shares_amount = 0.0
         reserved_shares_trader_id = None
         submission_ts = now()
-        submission_trading_day = client_trading_day or self._trading_day_for_timestamp(submission_ts)
+        submission_trading_day = client_trading_day or self._current_trading_day()
         if immediate:
             data['price'] = self._aggressive_price_for_immediate(
                 data['order_type'],
@@ -1753,8 +1791,12 @@ class TradingSession:
     @if_active
     async def handle_cancel_order(self, data: dict):
         if self.paused:
-            logger.info("Ignoring cancel_order while session is paused.")
-            return None
+            logger.info("Rejecting cancel_order because session is paused.")
+            return {
+                "respond": True,
+                "status": "failed",
+                "reason": "Market is paused",
+            }
 
         order_id = data.get('order_id')
         trader_id = data.get('trader_id')
@@ -1875,23 +1917,6 @@ class TradingSession:
     async def run(self):
         try:
             while not self._stop_requested.is_set():
-                current_time = now()
-                elapsed = self._effective_elapsed_seconds(current_time)
-                if elapsed > float(self.duration) * 60.0:
-                    # Time limit reached: stop accepting orders and broadcast closure.
-                    logger.critical('Time limit reached, stopping...')
-                    closure_callback = getattr(self, "on_session_closure", None)
-                    if callable(closure_callback):
-                        try:
-                            callback_result = closure_callback()
-                            if asyncio.iscoroutine(callback_result):
-                                await callback_result
-                        except Exception as exc:
-                            logger.error(f"Session closure callback failed: {exc}")
-                    self.active = False  # here we stop accepting all incoming requests on placing new orders, cancelling etc.
-                    await self.send_broadcast({"type": "closure"})
-
-                    break
                 await asyncio.sleep(1)
             logger.critical('Exited the run loop.')
         except asyncio.CancelledError:

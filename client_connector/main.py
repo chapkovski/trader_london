@@ -1,7 +1,7 @@
 import asyncio
 
 import aio_pika
-from fastapi import BackgroundTasks, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.websockets import WebSocketState
@@ -270,11 +270,12 @@ async def get_trading_session(trading_session_id: str):
 
 
 @app.post("/trading_session/{trading_session_id}/pause")
-async def pause_trading_session(trading_session_id: str):
+async def pause_trading_session(trading_session_id: str, payload: dict | None = Body(default=None)):
     trader_manager = trader_managers.get(trading_session_id)
     if not trader_manager:
         raise HTTPException(status_code=404, detail="Trading session not found")
-    result = await trader_manager.pause_session()
+    payload = payload or {}
+    result = await trader_manager.pause_session(trading_day=payload.get("trading_day"))
     return {
         "status": "success",
         "message": "Pause request processed",
@@ -287,14 +288,32 @@ async def pause_trading_session(trading_session_id: str):
 
 
 @app.post("/trading_session/{trading_session_id}/resume")
-async def resume_trading_session(trading_session_id: str):
+async def resume_trading_session(trading_session_id: str, payload: dict | None = Body(default=None)):
     trader_manager = trader_managers.get(trading_session_id)
     if not trader_manager:
         raise HTTPException(status_code=404, detail="Trading session not found")
-    result = await trader_manager.trading_session.resume_session()
+    payload = payload or {}
+    result = await trader_manager.trading_session.resume_session(trading_day=payload.get("trading_day"))
     return {
         "status": "success",
         "message": "Resume request processed",
+        "data": {
+            "trading_session_uuid": trading_session_id,
+            **result,
+        },
+    }
+
+
+@app.post("/trading_session/{trading_session_id}/finalize")
+async def finalize_trading_session(trading_session_id: str, payload: dict | None = Body(default=None)):
+    trader_manager = trader_managers.get(trading_session_id)
+    if not trader_manager:
+        raise HTTPException(status_code=404, detail="Trading session not found")
+    payload = payload or {}
+    result = await trader_manager.finalize_session(trading_day=payload.get("trading_day"))
+    return {
+        "status": "success",
+        "message": "Finalize request processed",
         "data": {
             "trading_session_uuid": trading_session_id,
             **result,

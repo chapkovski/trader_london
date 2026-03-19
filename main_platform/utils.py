@@ -22,14 +22,22 @@ def if_active(func):
     def sync_wrapper(self, *args, **kwargs):
         if not self.active:
             logger.critical(f"{func.__name__} is skipped because the trading session is not active.")
-            return None  # or alternatively, raise an exception
+            return {
+                "respond": True,
+                "status": "failed",
+                "reason": "Market is closed",
+            }
 
         return func(self, *args, **kwargs)
 
     async def async_wrapper(self, *args, **kwargs):
         if not self.active:
             logger.critical(f"{func.__name__} is skipped because the trading session is not active.")
-            return None  # or alternatively, raise an exception
+            return {
+                "respond": True,
+                "status": "failed",
+                "reason": "Market is closed",
+            }
 
         return await func(self, *args, **kwargs)
 

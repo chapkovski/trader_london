@@ -238,7 +238,7 @@ class TraderManager:
             "traders": per_trader,
         }
 
-    async def pause_session(self):
+    async def pause_session(self, trading_day=None):
         simulation_result = None
         if self.is_simulated:
             simulation_result = await self.generate_simulated_day_activity()
@@ -246,9 +246,21 @@ class TraderManager:
         dividend_result = None
         if result.get("changed"):
             day_to_apply = self._next_unapplied_day()
+            try:
+                if trading_day is not None:
+                    day_to_apply = int(trading_day)
+            except (TypeError, ValueError):
+                day_to_apply = self._next_unapplied_day()
             if day_to_apply <= (self.num_days - 1):
                 dividend_result = await self.apply_dividend_for_day(day_to_apply)
         return {**result, "dividend_result": dividend_result, "simulation_result": simulation_result}
+
+    async def finalize_session(self, trading_day=None):
+        result = await self.trading_session.finalize_session(trading_day=trading_day)
+        finalization_result = None
+        if result.get("status") in {"closed", "already_closed"}:
+            finalization_result = await self.apply_remaining_dividends()
+        return {**result, "finalization_result": finalization_result}
 
     async def apply_remaining_dividends(self):
         summaries = []
